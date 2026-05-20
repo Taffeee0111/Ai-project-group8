@@ -388,11 +388,21 @@ class Handler(BaseHTTPRequestHandler):
                 like = f"%{keyword}%"
                 rows = conn.execute(
                     """
-                    SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id
+                    SELECT b.*, s.row, s.col,
+                           CASE
+                               WHEN ?='' THEN 0
+                               ELSE
+                                   CASE WHEN b.title LIKE ? THEN 40 ELSE 0 END +
+                                   CASE WHEN b.category LIKE ? THEN 30 ELSE 0 END +
+                                   CASE WHEN b.author LIKE ? THEN 20 ELSE 0 END +
+                                   CASE WHEN b.description LIKE ? THEN 5 ELSE 0 END
+                           END AS match_score
+                    FROM books b JOIN shelves s ON b.shelf_id=s.id
                     WHERE ?='' OR b.title LIKE ? OR b.author LIKE ? OR b.category LIKE ? OR b.description LIKE ?
+                    ORDER BY match_score DESC, b.id ASC
                     LIMIT 80
                     """,
-                    (keyword, like, like, like, like),
+                    (keyword, like, like, like, like, keyword, like, like, like, like),
                 ).fetchall()
                 return json_response(self, 200, [row_to_dict(r) for r in rows])
 

@@ -5,6 +5,7 @@ const state = {
   map: null,
   path: [],
   targets: [],
+  searchKeyword: "",
 };
 
 const titles = {
@@ -49,13 +50,17 @@ function setPage(page) {
 }
 
 function bookCard(book, options = {}) {
+  const keyword = options.highlight || "";
+  const snippet = descriptionSnippet(book.description, keyword);
   const div = document.createElement("article");
   div.className = "book-card";
   div.innerHTML = `
-    <h3>${escapeHtml(book.title)}</h3>
+    <h3>${highlightText(book.title, keyword)}</h3>
     <div class="book-meta">
-      ${escapeHtml(book.author || "Unknown")} · <span class="tag">${escapeHtml(book.category || "未分类")}</span><br>
+      ${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "未分类", keyword)}</span><br>
       书架 ${book.shelf_id} / 第 ${book.shelf_slot} 位 · 坐标 (${book.row}, ${book.col})
+      ${book.match_score ? `<br>匹配度：${book.match_score}` : ""}
+      ${snippet ? `<br><span class="snippet">简介：${snippet}</span>` : ""}
       ${book.reason ? `<br>推荐原因：${escapeHtml(book.reason)}` : ""}
     </div>
     <div class="book-actions">
@@ -73,6 +78,31 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightText(value, keyword) {
+  const text = escapeHtml(value);
+  const term = String(keyword || "").trim();
+  if (!term) return text;
+  const pattern = new RegExp(`(${escapeRegExp(escapeHtml(term))})`, "gi");
+  return text.replace(pattern, "<mark>$1</mark>");
+}
+
+function descriptionSnippet(description, keyword) {
+  const raw = String(description || "").trim();
+  const term = String(keyword || "").trim();
+  if (!raw || !term) return "";
+  const index = raw.toLowerCase().indexOf(term.toLowerCase());
+  if (index < 0) return "";
+  const start = Math.max(0, index - 45);
+  const end = Math.min(raw.length, index + term.length + 75);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < raw.length ? "..." : "";
+  return `${prefix}${highlightText(raw.slice(start, end), term)}${suffix}`;
 }
 
 async function loadStats() {
@@ -98,10 +128,11 @@ async function loadMe() {
 
 async function searchBooks() {
   const keyword = qs("#searchInput").value.trim();
+  state.searchKeyword = keyword;
   const books = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}`);
   const list = qs("#bookResults");
   list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favorite: true })));
+  books.forEach((book) => list.appendChild(bookCard(book, { favorite: true, highlight: keyword })));
   qs("#resultCount").textContent = `${books.length} 本`;
   loadRecommendations();
 }

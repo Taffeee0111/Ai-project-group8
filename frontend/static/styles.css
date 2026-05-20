@@ -68,12 +68,16 @@ label {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
   background: #111820;
   color: #e9f0f2;
   padding: 22px;
   display: flex;
   flex-direction: column;
   gap: 22px;
+  overflow-y: auto;
 }
 
 .brand {
@@ -150,6 +154,13 @@ h1,
 h2,
 p {
   margin: 0;
+}
+
+mark {
+  background: #ffe08a;
+  color: #111820;
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 h1 {
@@ -276,6 +287,10 @@ section {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.snippet {
+  color: #43515a;
 }
 
 .book-actions {
