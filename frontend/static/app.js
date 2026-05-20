@@ -5,6 +5,8 @@ const state = {
   map: null,
   path: [],
   targets: [],
+  segments: [],
+  activeSegment: null,
   searchKeyword: "",
 };
 
@@ -45,6 +47,10 @@ function setPage(page) {
   qs(`[data-page="${page}"]`).classList.add("active");
   qs("#pageTitle").textContent = titles[page][0];
   qs("#pageSubtitle").textContent = titles[page][1];
+  if (page === "search") {
+    searchBooks({ record: false });
+    loadRecommendations();
+  }
   if (page === "pickup") loadPickup();
   if (page === "profile") loadProfile();
 }
@@ -52,6 +58,11 @@ function setPage(page) {
 function bookCard(book, options = {}) {
   const keyword = options.highlight || "";
   const snippet = descriptionSnippet(book.description, keyword);
+  const canToggleFavorite = options.favoriteToggle;
+  const isFavorite = Boolean(book.is_favorite);
+  const favoriteButton = isFavorite
+    ? `<button class="favorite-button active" data-fav-toggle="${book.id}" data-favorite="true">已收藏</button>`
+    : `<button class="favorite-button" data-fav-toggle="${book.id}" data-favorite="false">收藏</button>`;
   const div = document.createElement("article");
   div.className = "book-card";
   div.innerHTML = `
@@ -65,7 +76,7 @@ function bookCard(book, options = {}) {
     </div>
     <div class="book-actions">
       <span class="book-meta">${escapeHtml(book.status || "available")}</span>
-      ${options.favorite ? `<button data-fav="${book.id}">收藏</button>` : ""}
+      ${canToggleFavorite ? favoriteButton : ""}
       ${options.unfavorite ? `<button data-unfav="${book.id}">取消收藏</button>` : ""}
     </div>
   `;
@@ -126,13 +137,14 @@ async function loadMe() {
   }
 }
 
-async function searchBooks() {
+async function searchBooks(options = {}) {
+  const record = options.record !== false;
   const keyword = qs("#searchInput").value.trim();
   state.searchKeyword = keyword;
-  const books = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}`);
+  const books = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}&record=${record ? "1" : "0"}`);
   const list = qs("#bookResults");
   list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favorite: true, highlight: keyword })));
+  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword })));
   qs("#resultCount").textContent = `${books.length} 本`;
   loadRecommendations();
 }
@@ -141,20 +153,29 @@ async function loadRecommendations() {
   const books = await api("/api/books/recommendations?limit=10");
   const list = qs("#recommendations");
   list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favorite: true })));
+  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
 }
 
-async function favoriteBook(bookId) {
+async function toggleFavorite(bookId, isFavorite) {
   if (!state.token) {
     setPage("login");
     return;
   }
-  await api(`/api/books/${bookId}/favorite`, { method: "POST", body: "{}" });
+  if (isFavorite) {
+    await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
+  } else {
+    await api(`/api/books/${bookId}/favorite`, { method: "POST", body: "{}" });
+  }
+  if (state.page === "search") await searchBooks({ record: false });
+  if (state.page === "pickup") await loadPickup();
+  if (state.page === "profile") await loadProfile();
   await loadRecommendations();
 }
 
 async function unfavoriteBook(bookId) {
   await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
+  await searchBooks({ record: false });
+  await loadRecommendations();
   if (state.page === "pickup") loadPickup();
   if (state.page === "profile") loadProfile();
 }
@@ -190,24 +211,66 @@ function renderFavoriteSelector(favorites) {
 
 function renderMap() {
   if (!state.map) return;
-  const pathSet = new Set(state.path.map((p) => `${p[0]},${p[1]}`));
-  const targetSet = new Set(state.targets.map((t) => `${t.row},${t.col}`));
+  const visiblePath = state.activeSegment == null
+    ? state.path
+    : state.segments[state.activeSegment]?.path || [];
+  const pathSet = new Set(visiblePath.map((p) => `${p[0]},${p[1]}`));
+  const targetByCell = new Map();
+  state.targets.forEach((target, index) => {
+    targetByCell.set(`${target.row},${target.col}`, index + 1);
+  });
   const grid = qs("#libraryGrid");
   grid.innerHTML = "";
   for (let r = 0; r < state.map.size; r++) {
     for (let c = 0; c < state.map.size; c++) {
-      const cell = document.createElement("i");
+      const cell = document.createElement("button");
       const value = state.map.grid[r][c];
       cell.className = "cell";
       if (value === 1) cell.classList.add("shelf");
       if (value === 2) cell.classList.add("entrance");
       if (value === 3) cell.classList.add("exit");
-      if (pathSet.has(`${r},${c}`)) cell.className = "cell path";
-      if (targetSet.has(`${r},${c}`)) cell.className = "cell target";
+      if (pathSet.has(`${r},${c}`) && value !== 2 && value !== 3) cell.className = "cell path";
+      if (targetByCell.has(`${r},${c}`)) {
+        cell.className = "cell target";
+        cell.textContent = targetByCell.get(`${r},${c}`);
+      }
       cell.title = `(${r}, ${c})`;
       grid.appendChild(cell);
     }
   }
+}
+
+function renderRouteSteps() {
+  const box = qs("#routeSteps");
+  box.innerHTML = "";
+  if (!state.segments.length) return;
+
+  const heading = document.createElement("div");
+  heading.className = "section-title route-heading";
+  heading.innerHTML = `<h2>取书步骤</h2><span>点击步骤高亮该段</span>`;
+  box.appendChild(heading);
+
+  state.segments.forEach((segment, index) => {
+    const item = document.createElement("button");
+    item.className = `route-step ${state.activeSegment === index ? "active" : ""}`;
+    item.dataset.segment = index;
+    const directions = segment.instructions?.length ? segment.instructions.join("，") : "无需移动";
+    const title = segment.type === "exit"
+      ? `步骤 ${index + 1} · 前往出口`
+      : `步骤 ${index + 1} · 取 ${escapeHtml(segment.shelfId)}`;
+    const bookLine = segment.type === "book"
+      ? `<strong>${escapeHtml(segment.bookTitle)}</strong><br><span>${escapeHtml(segment.pickupSide)}取书</span>`
+      : `<strong>到达出口</strong><br><span>完成本次取书</span>`;
+    item.innerHTML = `
+      <div class="route-step-title">${title}</div>
+      <div class="route-step-body">
+        ${bookLine}
+        <span>距离：${segment.distance} 步</span>
+        <span>方向：${escapeHtml(directions)}</span>
+      </div>
+    `;
+    box.appendChild(item);
+  });
 }
 
 async function planPath() {
@@ -223,13 +286,20 @@ async function planPath() {
   });
   state.path = result.path || [];
   state.targets = result.visitOrder || [];
+  state.segments = result.segments || [];
+  state.activeSegment = null;
   qs("#pathMetrics").innerHTML = `
+    <strong>算法指标</strong><br>
     策略：${result.algorithm.toUpperCase()}<br>
-    路径长度：${result.distance} 步<br>
     扩展节点：${result.expanded}<br>
     运行时间：${result.runtimeMs} ms<br>
-    访问顺序：${result.visitOrder.map((b) => `${escapeHtml(b.shelf_id)} ${escapeHtml(b.title)}`).join(" → ")}
+    <br>
+    <strong>路线摘要</strong><br>
+    共需取书：${result.visitOrder.length} 本<br>
+    总路程：${result.distance} 步<br>
+    推荐顺序：${result.visitOrder.map((b) => escapeHtml(b.shelf_id)).join(" → ")} → 出口
   `;
+  renderRouteSteps();
   renderMap();
 }
 
@@ -238,6 +308,7 @@ async function loadProfile() {
     qs("#profileInfo").innerHTML = "请先登录。";
     qs("#historyList").innerHTML = "";
     qs("#profileFavorites").innerHTML = "";
+    qs("#passwordMessage").textContent = "";
     return;
   }
   const [me, history, favorites] = await Promise.all([
@@ -258,6 +329,34 @@ async function loadProfile() {
   });
   qs("#profileFavorites").innerHTML = "";
   favorites.forEach((book) => qs("#profileFavorites").appendChild(bookCard(book, { unfavorite: true })));
+}
+
+async function changePassword() {
+  const currentPassword = qs("#currentPassword").value;
+  const newPassword = qs("#newPassword").value;
+  const confirmPassword = qs("#confirmPassword").value;
+  const message = qs("#passwordMessage");
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    message.textContent = "请填写完整密码信息。";
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    message.textContent = "两次输入的新密码不一致。";
+    return;
+  }
+  try {
+    await api("/api/users/me/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    qs("#currentPassword").value = "";
+    qs("#newPassword").value = "";
+    qs("#confirmPassword").value = "";
+    message.textContent = "密码已更新。下次登录请使用新密码。";
+  } catch (err) {
+    message.textContent = err.message;
+  }
 }
 
 async function submitAuth() {
@@ -296,16 +395,37 @@ function bindEvents() {
     if (event.key === "Enter") searchBooks();
   });
   document.body.addEventListener("click", (event) => {
-    const fav = event.target.closest("[data-fav]");
+    const toggle = event.target.closest("[data-fav-toggle]");
     const unfav = event.target.closest("[data-unfav]");
-    if (fav) favoriteBook(fav.dataset.fav);
+    if (toggle) toggleFavorite(toggle.dataset.favToggle, toggle.dataset.favorite === "true");
     if (unfav) unfavoriteBook(unfav.dataset.unfav);
   });
   qs("#refreshFavorites").addEventListener("click", loadPickup);
   qs("#planButton").addEventListener("click", planPath);
+  qs("#routeSteps").addEventListener("click", (event) => {
+    const step = event.target.closest("[data-segment]");
+    if (!step) return;
+    const index = Number(step.dataset.segment);
+    state.activeSegment = state.activeSegment === index ? null : index;
+    renderRouteSteps();
+    renderMap();
+  });
   qs("#authSubmit").addEventListener("click", submitAuth);
+  document.querySelectorAll(".toggle-password").forEach((button) => {
+    button.addEventListener("click", () => togglePasswordVisibility(button));
+  });
+  qs("#changePasswordButton").addEventListener("click", changePassword);
   qs("#loginTab").addEventListener("click", () => switchAuth(false));
   qs("#registerTab").addEventListener("click", () => switchAuth(true));
+}
+
+function togglePasswordVisibility(button) {
+  const input = qs(`#${button.dataset.target}`);
+  const showing = input.type === "text";
+  input.type = showing ? "password" : "text";
+  button.textContent = showing ? "👁" : "🙈";
+  button.setAttribute("aria-label", showing ? "显示密码" : "隐藏密码");
+  button.title = showing ? "显示密码" : "隐藏密码";
 }
 
 function switchAuth(register) {
@@ -319,7 +439,7 @@ async function boot() {
   bindEvents();
   await loadStats();
   await loadMe();
-  await searchBooks();
+  await searchBooks({ record: false });
   await loadRecommendations();
 }
 

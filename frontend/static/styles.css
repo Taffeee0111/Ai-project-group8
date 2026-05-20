@@ -61,6 +61,10 @@ label {
   font-size: 13px;
 }
 
+.top-label {
+  margin-top: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -230,6 +234,28 @@ h2 {
   margin-top: 12px;
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 44px;
+}
+
+.password-field button {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+}
+
 .search-row {
   display: grid;
   grid-template-columns: 1fr 110px;
@@ -267,6 +293,18 @@ section {
   gap: 10px;
 }
 
+.history-list {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#favoriteSelector {
+  max-height: 26vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .book-card,
 .selector-item,
 .profile-card,
@@ -276,6 +314,14 @@ section {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
+}
+
+.password-card {
+  margin-top: 12px;
+}
+
+.password-card h2 {
+  margin-bottom: 8px;
 }
 
 .book-card h3 {
@@ -301,6 +347,13 @@ section {
   margin-top: 12px;
 }
 
+.favorite-button.active {
+  background: #e6f4f1;
+  border-color: #89c9c2;
+  color: #096b68;
+  font-weight: 700;
+}
+
 .tag {
   display: inline-flex;
   background: #e6f4f1;
@@ -319,6 +372,14 @@ section {
 .pickup-panel,
 .map-panel {
   min-width: 0;
+}
+
+.map-panel {
+  position: sticky;
+  top: 26px;
+  align-self: start;
+  max-height: calc(100vh - 52px);
+  overflow: visible;
 }
 
 .selector-item {
@@ -348,6 +409,14 @@ section {
   gap: 5px;
 }
 
+.legend .cell {
+  width: 14px;
+  height: 14px;
+  aspect-ratio: auto;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  flex: 0 0 14px;
+}
+
 .library-grid {
   display: grid;
   grid-template-columns: repeat(24, minmax(14px, 1fr));
@@ -363,6 +432,12 @@ section {
   display: block;
   border-radius: 3px;
   background: #fff;
+  border: 0;
+  padding: 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .cell.shelf {
@@ -383,12 +458,61 @@ section {
 
 .cell.target {
   background: var(--target);
+  color: #fff;
+  display: grid;
+  place-items: center;
 }
 
 .metrics {
   margin-top: 14px;
   color: var(--muted);
   line-height: 1.7;
+}
+
+.route-steps {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.route-heading {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.route-step {
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.route-step.active {
+  border-color: var(--primary);
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.route-step-title {
+  color: var(--primary-dark);
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.route-step-body {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.route-step-body strong {
+  color: var(--ink);
 }
 
 .profile-grid {
@@ -414,6 +538,30 @@ section {
   .pickup-layout,
   .profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .map-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .route-steps {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  #favoriteSelector {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .history-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .span-2 {

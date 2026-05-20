@@ -218,6 +218,27 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
+def mark_favorites(conn: sqlite3.Connection, rows: list[sqlite3.Row], user_id: int | None) -> list[dict[str, Any]]:
+    items = [row_to_dict(row) for row in rows]
+    if not user_id or not items:
+        for item in items:
+            item["is_favorite"] = False
+        return items
+
+    ids = [item["id"] for item in items]
+    placeholders = ",".join("?" for _ in ids)
+    favorite_ids = {
+        row["book_id"]
+        for row in conn.execute(
+            f"SELECT book_id FROM favorites WHERE user_id=? AND book_id IN ({placeholders})",
+            [user_id, *ids],
+        ).fetchall()
+    }
+    for item in items:
+        item["is_favorite"] = item["id"] in favorite_ids
+    return items
+
+
 def get_user(handler: BaseHTTPRequestHandler) -> int | None:
     auth = handler.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
@@ -312,6 +333,49 @@ def pickup_point(shelf: sqlite3.Row) -> tuple[int, int]:
     return (row, col)
 
 
+def pickup_side(shelf_row: int, shelf_col: int, pickup: tuple[int, int]) -> str:
+    row, col = pickup
+    if row == shelf_row and col == shelf_col - 1:
+        return "左侧通道"
+    if row == shelf_row and col == shelf_col + 1:
+        return "右侧通道"
+    if row == shelf_row - 1 and col == shelf_col:
+        return "上方通道"
+    if row == shelf_row + 1 and col == shelf_col:
+        return "下方通道"
+    return "附近通道"
+
+
+def movement_instructions(path: list[list[int]]) -> list[str]:
+    if len(path) < 2:
+        return []
+
+    directions = {
+        (1, 0): "向下",
+        (-1, 0): "向上",
+        (0, 1): "向右",
+        (0, -1): "向左",
+    }
+    instructions = []
+    current_direction = None
+    steps = 0
+
+    for prev, current in zip(path, path[1:]):
+        delta = (current[0] - prev[0], current[1] - prev[1])
+        direction = directions.get(delta, "移动")
+        if direction == current_direction:
+            steps += 1
+        else:
+            if current_direction:
+                instructions.append(f"{current_direction}走 {steps} 格")
+            current_direction = direction
+            steps = 1
+
+    if current_direction:
+        instructions.append(f"{current_direction}走 {steps} 格")
+    return instructions
+
+
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) -> None:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -383,7 +447,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/books/search":
                 keyword = query.get("keyword", [""])[0].strip()
-                if user_id and keyword:
+                should_record = query.get("record", ["1"])[0] != "0"
+                if user_id and keyword and should_record:
                     conn.execute("INSERT INTO search_history(user_id,keyword,created_at) VALUES(?,?,?)", (user_id, keyword, now()))
                 like = f"%{keyword}%"
                 rows = conn.execute(
@@ -404,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                     """,
                     (keyword, like, like, like, like, keyword, like, like, like, like),
                 ).fetchall()
-                return json_response(self, 200, [row_to_dict(r) for r in rows])
+                return json_response(self, 200, mark_favorites(conn, rows, user_id))
 
             if path == "/api/books/recommendations":
                 limit = int(query.get("limit", ["10"])[0])
@@ -417,7 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                     "SELECT keyword,created_at FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 30",
                     (user_id,),
                 ).fetchall()
-                return json_response(self, 200, [row_to_dict(r) for r in rows])
+                items = [row_to_dict(r) | {"is_favorite": True} for r in rows]
+                return json_response(self, 200, items)
 
             if path in ("/api/favorites", "/api/users/me/favorites"):
                 if not user_id:
@@ -458,6 +524,19 @@ class Handler(BaseHTTPRequestHandler):
                 TOKENS[token] = user["id"]
                 conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now(), user["id"]))
                 return json_response(self, 200, {"token": token, "user": {"id": user["id"], "username": user["username"]}})
+
+            if path == "/api/users/me/password":
+                if not user_id:
+                    return json_response(self, 401, {"error": "Unauthorized"})
+                current_password = data.get("currentPassword", "")
+                new_password = data.get("newPassword", "")
+                if len(new_password) < 6:
+                    return json_response(self, 400, {"error": "新密码至少需要 6 位"})
+                user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+                if not user or user["password_hash"] != hash_password(current_password):
+                    return json_response(self, 401, {"error": "当前密码不正确"})
+                conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), user_id))
+                return json_response(self, 200, {"ok": True})
 
             if path.startswith("/api/books/") and path.endswith("/favorite"):
                 if not user_id:
@@ -510,7 +589,7 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [row_to_dict(r) | {"reason": "默认推荐"} for r in rows]
+        return [item | {"reason": "默认推荐"} for item in mark_favorites(conn, rows, user_id)]
 
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
     favs = favorite_rows(conn, user_id)
@@ -538,7 +617,7 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [row_to_dict(r) | {"reason": "暂无足够历史，显示馆藏推荐"} for r in rows]
+        return [item | {"reason": "暂无足够历史，显示馆藏推荐"} for item in mark_favorites(conn, rows, user_id)]
     scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
     return [item[2] for item in scored[:limit]]
 
@@ -560,9 +639,11 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
     unvisited = targets[:]
     full_path: list[list[int]] = [[0, 0]]
     visit_order = []
+    segments = []
     total_distance = 0
     total_expanded = 0
     total_runtime = 0.0
+    previous_label = "入口"
 
     while unvisited:
         best = None
@@ -578,7 +659,29 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         total_expanded += segment["expanded"]
         total_runtime += segment["runtimeMs"]
         visit_order.append(target)
+        side = pickup_side(target["row"], target["col"], tuple(target["pickup"]))
+        segments.append(
+            {
+                "type": "book",
+                "from": previous_label,
+                "to": target["shelf_id"],
+                "bookId": target["id"],
+                "bookCode": target["book_id"],
+                "bookTitle": target["title"],
+                "shelfId": target["shelf_id"],
+                "shelfPosition": [target["row"], target["col"]],
+                "pickup": target["pickup"],
+                "pickupSide": side,
+                "distance": segment["distance"],
+                "expanded": segment["expanded"],
+                "runtimeMs": segment["runtimeMs"],
+                "path": segment["path"],
+                "instructions": movement_instructions(segment["path"]),
+                "summary": f"从{previous_label}出发，到达 {target['shelf_id']} {side}，取《{target['title']}》。",
+            }
+        )
         current = tuple(target["pickup"])
+        previous_label = target["shelf_id"]
         unvisited.remove(target)
 
     end_segment = search_path(current, (23, 23), algorithm)
@@ -587,6 +690,19 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         total_distance += end_segment["distance"]
         total_expanded += end_segment["expanded"]
         total_runtime += end_segment["runtimeMs"]
+        segments.append(
+            {
+                "type": "exit",
+                "from": previous_label,
+                "to": "出口",
+                "distance": end_segment["distance"],
+                "expanded": end_segment["expanded"],
+                "runtimeMs": end_segment["runtimeMs"],
+                "path": end_segment["path"],
+                "instructions": movement_instructions(end_segment["path"]),
+                "summary": f"从{previous_label}前往出口，完成本次取书。",
+            }
+        )
 
     return {
         "algorithm": algorithm,
@@ -594,6 +710,7 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         "expanded": total_expanded,
         "runtimeMs": round(total_runtime, 3),
         "path": full_path,
+        "segments": segments,
         "visitOrder": visit_order,
         "unreachable": unvisited,
     }
