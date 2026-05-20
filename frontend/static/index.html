@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>图书馆智能借阅系统</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">AI</span>
+          <div>
+            <strong>智能借阅</strong>
+            <small>Library Search & Path Planning</small>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-button active" data-page="search">搜索</button>
+          <button class="nav-button" data-page="pickup">取书</button>
+          <button class="nav-button" data-page="profile">个人</button>
+          <button class="nav-button" data-page="login">登录</button>
+        </nav>
+        <div class="system-card">
+          <span>馆藏</span>
+          <strong id="bookCount">-</strong>
+          <span>书架</span>
+          <strong id="shelfCount">-</strong>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <h1 id="pageTitle">图书搜索</h1>
+            <p id="pageSubtitle">搜索 1500 本馆藏图书，收藏后可生成取书路线。</p>
+          </div>
+          <div class="user-chip" id="userChip">未登录</div>
+        </header>
+
+        <section class="page" id="loginPage">
+          <div class="auth-panel">
+            <div class="tabs">
+              <button class="tab active" id="loginTab">登录</button>
+              <button class="tab" id="registerTab">注册</button>
+            </div>
+            <label>用户名</label>
+            <input id="authUsername" value="demo" autocomplete="username" />
+            <label>密码</label>
+            <input id="authPassword" type="password" value="demo123" autocomplete="current-password" />
+            <button class="primary" id="authSubmit">登录</button>
+            <p class="hint" id="authMessage">演示账号：demo / demo123</p>
+          </div>
+        </section>
+
+        <section class="page active" id="searchPage">
+          <div class="search-row">
+            <input id="searchInput" placeholder="输入书名、作者、标签或简介关键词" />
+            <button class="primary" id="searchButton">搜索</button>
+          </div>
+          <div class="content-grid">
+            <section>
+              <div class="section-title">
+                <h2>搜索结果</h2>
+                <span id="resultCount">0 本</span>
+              </div>
+              <div class="book-list" id="bookResults"></div>
+            </section>
+            <section>
+              <div class="section-title">
+                <h2>智能推荐</h2>
+                <span>Top 10</span>
+              </div>
+              <div class="book-list compact" id="recommendations"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" id="pickupPage">
+          <div class="pickup-layout">
+            <section class="pickup-panel">
+              <div class="section-title">
+                <h2>选择要取的书</h2>
+                <button id="refreshFavorites">刷新</button>
+              </div>
+              <div id="favoriteSelector" class="selector-list"></div>
+              <label>搜索策略</label>
+              <select id="algorithmSelect">
+                <option value="astar">A* Search</option>
+                <option value="bfs">BFS</option>
+                <option value="ucs">Uniform Cost Search</option>
+              </select>
+              <button class="primary wide" id="planButton">生成路径</button>
+              <div class="metrics" id="pathMetrics"></div>
+            </section>
+            <section class="map-panel">
+              <div class="section-title">
+                <h2>24 × 24 图书馆地图</h2>
+                <span>300 个书架</span>
+              </div>
+              <div class="legend">
+                <span><i class="cell entrance"></i>入口</span>
+                <span><i class="cell exit"></i>出口</span>
+                <span><i class="cell shelf"></i>书架</span>
+                <span><i class="cell target"></i>目标</span>
+                <span><i class="cell path"></i>路径</span>
+              </div>
+              <div id="libraryGrid" class="library-grid"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" id="profilePage">
+          <div class="profile-grid">
+            <section>
+              <div class="section-title">
+                <h2>个人信息</h2>
+              </div>
+              <div class="profile-card" id="profileInfo"></div>
+            </section>
+            <section>
+              <div class="section-title">
+                <h2>搜索历史</h2>
+              </div>
+              <div class="history-list" id="historyList"></div>
+            </section>
+            <section class="span-2">
+              <div class="section-title">
+                <h2>收藏图书</h2>
+              </div>
+              <div class="book-list" id="profileFavorites"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
