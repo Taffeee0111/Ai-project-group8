@@ -1,0 +1,14 @@
+#pragma once
+// Purpose: A* pathfinding algorithm interface/placeholder (implementation to be added later).
+
+#include "search/SearchAlgorithm.h"
+
+namespace ainav {
+
+class AStar final : public SearchAlgorithm {
+ public:
+  PathResult findPath(const GridMap& map, Point start, Point goal) const override;
+};
+
+}  // namespace ainav
+

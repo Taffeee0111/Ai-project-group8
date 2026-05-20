@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build (MinGW g++) - GridMap demo",
+      "type": "shell",
+      "command": "D:\\\\mingw64\\\\bin\\\\g++.exe",
+      "args": [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-g3",
+        "-I",
+        "${workspaceFolder}\\\\include",
+        "${workspaceFolder}\\\\src\\\\main.cpp",
+        "${workspaceFolder}\\\\src\\\\core\\\\GridMap.cpp",
+        "-o",
+        "${workspaceFolder}\\\\src\\\\output\\\\main.exe"
+      ],
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
+

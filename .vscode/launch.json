@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run GridMap demo",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\src\\output\\main.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "PATH",
+          "value": "D:\\mingw64\\bin;${env:PATH}"
+        }
+      ],
+      "MIMode": "gdb",
+      "miDebuggerPath": "D:\\mingw64\\bin\\gdb.exe",
+      "preLaunchTask": "Build (MinGW g++) - GridMap demo"
+    }
+  ]
+}
+
