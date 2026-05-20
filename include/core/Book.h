@@ -12,6 +12,7 @@ struct Book {
   BookId id;
   std::string title;
   std::string author;
+  std::string description;
 
   // Content-based features (initially from CSV keywords column).
   std::vector<std::string> keywords;
@@ -21,4 +22,3 @@ struct Book {
 };
 
 }  // namespace ainav
-

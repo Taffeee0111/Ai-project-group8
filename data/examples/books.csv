@@ -1,7 +1,6 @@
-book_id,title,author,keywords,shelf_id
-B001,Intro to AI,Example Author,ai|basics|history,S01
-B002,Search Algorithms,Example Author,ai|search|graph,S01
-B003,Machine Learning 101,Example Author,ml|basics|supervised,S01
-B004,Planning in AI,Example Author,planning|csp|ai,S01
-B005,Robotics Basics,Example Author,robotics|sensors|ai,S01
-
+book_id,title,author,description,keywords,shelf_id
+B001,Intro to AI,Example Author,An introductory overview of AI concepts.,ai|basics|history,S01
+B002,Search Algorithms,Example Author,Graph search methods for solving problems.,ai|search|graph,S01
+B003,Machine Learning 101,Example Author,Basics of supervised learning and evaluation.,ml|basics|supervised,S01
+B004,Planning in AI,Example Author,Planning and constraint satisfaction fundamentals.,planning|csp|ai,S01
+B005,Robotics Basics,Example Author,Foundations of robots, sensors, and control.,robotics|sensors|ai,S01

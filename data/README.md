@@ -9,6 +9,7 @@ Suggested columns:
 - `book_id` (string, unique)
 - `title` (string)
 - `author` (string)
+- `description` (string; free text)
 - `keywords` (string; e.g. `ai|ml|search`)
 - `shelf_id` (string; maps the book to a shelf)
 
@@ -31,4 +32,3 @@ If you prefer to store a full grid, store one row per `y` with 24 integers per r
 - `1` = obstacle
 
 If you use `shelves.csv` only, the map can be derived by marking shelf cells as obstacles.
-

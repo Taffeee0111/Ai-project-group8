@@ -14,6 +14,8 @@
         "${workspaceFolder}\\\\include",
         "${workspaceFolder}\\\\src\\\\main.cpp",
         "${workspaceFolder}\\\\src\\\\core\\\\GridMap.cpp",
+        "${workspaceFolder}\\\\src\\\\search\\\\BFS.cpp",
+        "${workspaceFolder}\\\\src\\\\search\\\\DFS.cpp",
         "-o",
         "${workspaceFolder}\\\\src\\\\output\\\\main.exe"
       ],
@@ -25,4 +27,3 @@
     }
   ]
 }
-
