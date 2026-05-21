@@ -564,6 +564,17 @@ class Handler(BaseHTTPRequestHandler):
                 book_ids = [int(x) for x in data.get("bookIds", [])]
                 return json_response(self, 200, plan_pickup(conn, book_ids, algorithm))
 
+            if path == "/api/pickup/solve":
+                if not user_id:
+                    return json_response(self, 401, {"error": "Unauthorized"})
+                algorithm = data.get("algorithm", "astar")
+                method = data.get("method", "greedy")
+                book_ids = [int(x) for x in data.get("bookIds", [])]
+                result = solve_pickup(conn, book_ids, algorithm, method)
+                if "error" in result:
+                    return json_response(self, 400, result)
+                return json_response(self, 200, result)
+
         json_response(self, 404, {"error": "Not found"})
 
     def handle_delete(self, path: str) -> None:
@@ -722,6 +733,310 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         "segments": segments,
         "visitOrder": visit_order,
         "unreachable": unvisited,
+    }
+
+
+def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        f"""
+        SELECT b.id, b.book_id, b.title, b.shelf_id, s.row, s.col
+        FROM books b JOIN shelves s ON b.shelf_id=s.id
+        WHERE b.id IN ({','.join('?' for _ in book_ids) if book_ids else 'NULL'})
+        """,
+        book_ids,
+    ).fetchall()
+    return [row_to_dict(row) | {"pickup": list(pickup_point(row))} for row in rows]
+
+
+def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, method: str) -> dict[str, Any]:
+    method = (method or "greedy").lower()
+    if method == "greedy":
+        return plan_pickup(conn, book_ids, algorithm)
+
+    targets = pickup_targets(conn, book_ids)
+    if not targets:
+        return {"algorithm": algorithm, "method": method, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[0, 0]], "segments": [], "visitOrder": [], "unreachable": []}
+
+    if method in {"csp", "planning"} and len(targets) > 10:
+        return {"error": "CSP/Planning 目前仅支持最多 10 本书（组合空间过大），请减少选择或使用 Greedy。"}
+
+    started = time.perf_counter()
+    points = compute_keypoints(targets)
+    pair_results, pre_expanded, pre_runtime = precompute_paths(points, algorithm)
+
+    if method == "csp":
+        order, solver_expanded = csp_pickup_order(pair_results, len(targets))
+    elif method == "planning":
+        order, solver_expanded = planning_pickup_order(pair_results, len(targets))
+    else:
+        return {"error": f"Unknown method: {method}"}
+
+    plan = plan_pickup_with_order(targets, order, algorithm, pair_results)
+    plan["method"] = method
+    plan["solverExpanded"] = solver_expanded
+    plan["precomputeExpanded"] = pre_expanded
+    plan["precomputeRuntimeMs"] = round(pre_runtime, 3)
+    plan["runtimeMs"] = round((time.perf_counter() - started) * 1000, 3)
+    plan["expanded"] = int(plan.get("expanded") or 0) + int(solver_expanded or 0)
+    return plan
+
+
+def compute_keypoints(targets: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    return [(0, 0), *[tuple(t["pickup"]) for t in targets], (23, 23)]
+
+
+def precompute_paths(
+    points: list[tuple[int, int]],
+    algorithm: str,
+) -> tuple[dict[tuple[int, int], dict[str, Any]], int, float]:
+    results: dict[tuple[int, int], dict[str, Any]] = {}
+    total_expanded = 0
+    total_runtime = 0.0
+    for i, src in enumerate(points):
+        for j, dst in enumerate(points):
+            if i == j:
+                continue
+            res = search_path(src, dst, algorithm)
+            results[(i, j)] = res
+            total_expanded += int(res.get("expanded") or 0)
+            total_runtime += float(res.get("runtimeMs") or 0.0)
+    return results, total_expanded, total_runtime
+
+
+def best_segment(
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+    src_idx: int,
+    dst_idx: int,
+) -> dict[str, Any]:
+    return pair_results.get((src_idx, dst_idx), {"path": [], "distance": None, "expanded": 0, "runtimeMs": 0.0})
+
+
+def csp_pickup_order(
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+    target_count: int,
+) -> tuple[list[int], int]:
+    # CSP/COP view:
+    # - Variables: order position k in [0..n-1]
+    # - Domain: targets {1..n}
+    # - Constraints: all-different
+    # - Objective: minimize sum(dist(prev, next)) + dist(last, exit)
+    #
+    # We solve via backtracking + branch-and-bound.
+    solver_expanded = 0
+    targets = list(range(1, target_count + 1))
+
+    dist: dict[tuple[int, int], int] = {}
+    for i in range(0, target_count + 2):
+        for j in range(0, target_count + 2):
+            if i == j:
+                continue
+            d = best_segment(pair_results, i, j).get("distance")
+            if d is not None:
+                dist[(i, j)] = int(d)
+
+    exit_idx = target_count + 1
+    min_out: dict[int, int] = {}
+    for i in range(0, target_count + 1):  # exclude exit itself
+        candidates = []
+        for j in range(1, target_count + 1):
+            if i != j and (i, j) in dist:
+                candidates.append(dist[(i, j)])
+        if (i, exit_idx) in dist:
+            candidates.append(dist[(i, exit_idx)])
+        min_out[i] = min(candidates) if candidates else 10**9
+
+    best_cost = 10**18
+    best_order: list[int] = []
+
+    def lower_bound(current_idx: int, remaining: list[int]) -> int:
+        if not remaining:
+            return dist.get((current_idx, exit_idx), 10**9)
+        lb = min(dist.get((current_idx, t), 10**9) for t in remaining)
+        lb += sum(min_out.get(t, 10**9) for t in remaining)
+        return lb
+
+    def backtrack(current_idx: int, remaining: list[int], cost_so_far: int, order: list[int]) -> None:
+        nonlocal best_cost, best_order, solver_expanded
+        solver_expanded += 1
+        if cost_so_far >= best_cost:
+            return
+        if cost_so_far + lower_bound(current_idx, remaining) >= best_cost:
+            return
+        if not remaining:
+            final_leg = dist.get((current_idx, exit_idx))
+            if final_leg is None:
+                return
+            total = cost_so_far + final_leg
+            if total < best_cost:
+                best_cost = total
+                best_order = order[:]
+            return
+
+        remaining_sorted = sorted(remaining, key=lambda t: dist.get((current_idx, t), 10**9))
+        for t in remaining_sorted:
+            step = dist.get((current_idx, t))
+            if step is None:
+                continue
+            nxt_remaining = [x for x in remaining if x != t]
+            order.append(t)
+            backtrack(t, nxt_remaining, cost_so_far + step, order)
+            order.pop()
+
+    backtrack(0, targets, 0, [])
+    return best_order, solver_expanded
+
+
+def planning_pickup_order(
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+    target_count: int,
+) -> tuple[list[int], int]:
+    # Planning view:
+    # - State: (at_index, visited_mask)
+    # - Actions: pick(target_i) moves to i, cost = dist(at, i)
+    # - Goal: all targets visited, then go to exit (handled after reconstruction)
+    #
+    # We solve with A* on this explicit state space.
+    solver_expanded = 0
+    exit_idx = target_count + 1
+
+    dist: dict[tuple[int, int], int] = {}
+    for i in range(0, target_count + 2):
+        for j in range(0, target_count + 2):
+            if i == j:
+                continue
+            d = best_segment(pair_results, i, j).get("distance")
+            if d is not None:
+                dist[(i, j)] = int(d)
+
+    all_mask = (1 << target_count) - 1
+
+    def h(at_idx: int, mask: int) -> int:
+        if mask == all_mask:
+            return dist.get((at_idx, exit_idx), 0)
+        candidates = []
+        for t in range(1, target_count + 1):
+            bit = 1 << (t - 1)
+            if (mask & bit) == 0:
+                candidates.append(dist.get((at_idx, t), 10**9))
+        return min(candidates) if candidates else 0
+
+    start = (0, 0)
+    heap: list[tuple[int, int, tuple[int, int]]] = [(h(*start), 0, start)]
+    best_g: dict[tuple[int, int], int] = {start: 0}
+    came_from: dict[tuple[int, int], tuple[tuple[int, int], int] | None] = {start: None}
+
+    while heap:
+        _, g, state = heapq.heappop(heap)
+        if g != best_g.get(state, 10**18):
+            continue
+        solver_expanded += 1
+        at_idx, mask = state
+        if mask == all_mask:
+            order: list[int] = []
+            cur = state
+            while came_from[cur] is not None:
+                prev, action_target = came_from[cur]
+                order.append(action_target)
+                cur = prev
+            order.reverse()
+            return order, solver_expanded
+
+        for t in range(1, target_count + 1):
+            bit = 1 << (t - 1)
+            if mask & bit:
+                continue
+            step = dist.get((at_idx, t))
+            if step is None:
+                continue
+            nxt = (t, mask | bit)
+            ng = g + step
+            if ng < best_g.get(nxt, 10**18):
+                best_g[nxt] = ng
+                came_from[nxt] = (state, t)
+                heapq.heappush(heap, (ng + h(*nxt), ng, nxt))
+
+    return [], solver_expanded
+
+
+def plan_pickup_with_order(
+    targets: list[dict[str, Any]],
+    order: list[int],
+    algorithm: str,
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+) -> dict[str, Any]:
+    current_idx = 0
+    full_path: list[list[int]] = [[0, 0]]
+    visit_order: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = []
+    total_distance = 0
+    total_expanded = 0
+    total_runtime = 0.0
+    previous_label = "入口"
+
+    for t_idx in order:
+        target = targets[t_idx - 1]
+        seg = best_segment(pair_results, current_idx, t_idx)
+        if seg.get("distance") is None:
+            continue
+        full_path.extend(seg["path"][1:])
+        total_distance += int(seg["distance"])
+        total_expanded += int(seg.get("expanded") or 0)
+        total_runtime += float(seg.get("runtimeMs") or 0.0)
+        visit_order.append(target)
+        side = pickup_side(target["row"], target["col"], tuple(target["pickup"]))
+        segments.append(
+            {
+                "type": "book",
+                "from": previous_label,
+                "to": target["shelf_id"],
+                "bookId": target["id"],
+                "bookCode": target["book_id"],
+                "bookTitle": target["title"],
+                "shelfId": target["shelf_id"],
+                "shelfPosition": [target["row"], target["col"]],
+                "pickup": target["pickup"],
+                "pickupSide": side,
+                "distance": int(seg["distance"]),
+                "expanded": int(seg.get("expanded") or 0),
+                "runtimeMs": float(seg.get("runtimeMs") or 0.0),
+                "path": seg["path"],
+                "instructions": movement_instructions(seg["path"]),
+                "summary": f"从{previous_label}出发，到达 {target['shelf_id']} {side}，取《{target['title']}》。",
+            }
+        )
+        current_idx = t_idx
+        previous_label = target["shelf_id"]
+
+    exit_idx = len(targets) + 1
+    end_seg = best_segment(pair_results, current_idx, exit_idx)
+    if end_seg.get("distance") is not None:
+        full_path.extend(end_seg["path"][1:])
+        total_distance += int(end_seg["distance"])
+        total_expanded += int(end_seg.get("expanded") or 0)
+        total_runtime += float(end_seg.get("runtimeMs") or 0.0)
+        segments.append(
+            {
+                "type": "exit",
+                "from": previous_label,
+                "to": "出口",
+                "distance": int(end_seg["distance"]),
+                "expanded": int(end_seg.get("expanded") or 0),
+                "runtimeMs": float(end_seg.get("runtimeMs") or 0.0),
+                "path": end_seg["path"],
+                "instructions": movement_instructions(end_seg["path"]),
+                "summary": f"从{previous_label}前往出口，完成本次取书。",
+            }
+        )
+
+    return {
+        "algorithm": algorithm,
+        "distance": total_distance,
+        "expanded": total_expanded,
+        "runtimeMs": round(total_runtime, 3),
+        "path": full_path,
+        "segments": segments,
+        "visitOrder": visit_order,
+        "unreachable": [],
     }
 
 

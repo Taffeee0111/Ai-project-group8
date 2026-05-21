@@ -280,19 +280,35 @@ async function planPath() {
     return;
   }
   const algorithm = qs("#algorithmSelect").value;
-  const result = await api("/api/pickup/plan", {
-    method: "POST",
-    body: JSON.stringify({ bookIds: ids, algorithm }),
-  });
+  const method = qs("#solverSelect")?.value || "greedy";
+  let result;
+  try {
+    result = await api("/api/pickup/solve", {
+      method: "POST",
+      body: JSON.stringify({ bookIds: ids, algorithm, method }),
+    });
+  } catch (err) {
+    state.path = [];
+    state.targets = [];
+    state.segments = [];
+    state.activeSegment = null;
+    qs("#pathMetrics").textContent = err.message;
+    renderRouteSteps();
+    renderMap();
+    return;
+  }
   state.path = result.path || [];
   state.targets = result.visitOrder || [];
   state.segments = result.segments || [];
   state.activeSegment = null;
   qs("#pathMetrics").innerHTML = `
     <strong>算法指标</strong><br>
+    求解方式：${escapeHtml(String(result.method || method).toUpperCase())}<br>
     策略：${result.algorithm.toUpperCase()}<br>
     扩展节点：${result.expanded}<br>
     运行时间：${result.runtimeMs} ms<br>
+    ${result.solverExpanded != null ? `组合求解扩展：${result.solverExpanded}<br>` : ""}
+    ${result.precomputeExpanded != null ? `两点最短路扩展：${result.precomputeExpanded}<br>` : ""}
     <br>
     <strong>路线摘要</strong><br>
     共需取书：${result.visitOrder.length} 本<br>
