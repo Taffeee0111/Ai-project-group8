@@ -6,7 +6,7 @@
 
 - 注册和登录。
 - 搜索 `book_collection_filled_1500.docx` 中的 1500 本图书。
-- 根据搜索历史和收藏记录生成推荐。
+- 根据搜索历史和收藏记录生成推荐，推荐系统使用 TF-IDF 向量化和 cosine similarity。
 - 收藏图书并在个人中心查看。
 - 从收藏中选择多本书，使用 BFS、Uniform Cost Search 或 A* Search 规划取书路径。
 - 地图包含 300 个书架，每个书架存放 5 本书。
@@ -16,7 +16,7 @@
 系统首次启动时会尝试读取：
 
 ```text
-C:\Users\Lenovo\xwechat_files\wxid_7v70kqj8qvgp22_7bdd\msg\file\2026-05\book_collection_filled_1500.docx
+backend/data/book_collection_filled_1500.docx
 ```
 
 如果文件存在，会自动导入 1500 本图书。如果文件不存在，会使用一组演示数据，方便系统仍然可以运行。
@@ -69,6 +69,7 @@ password: demo123
 backend/
   server.py              # HTTP API、数据库、推荐、路径算法
   data/
+    book_collection_filled_1500.docx
     library.db           # 首次运行后自动生成
 frontend/
   static/
@@ -78,4 +79,3 @@ frontend/
 docs/
   library_borrowing_system_plan.md
 ```
-

@@ -5,6 +5,7 @@ import heapq
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -20,9 +21,7 @@ from xml.etree import ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "backend" / "data" / "library.db"
 FRONTEND_DIR = ROOT / "frontend" / "static"
-BOOK_DOCX = Path(
-    r"C:\Users\Lenovo\xwechat_files\wxid_7v70kqj8qvgp22_7bdd\msg\file\2026-05\book_collection_filled_1500.docx"
-)
+BOOK_DOCX = ROOT / "backend" / "data" / "book_collection_filled_1500.docx"
 
 TOKENS: dict[str, int] = {}
 GRID_SIZE = 24
@@ -603,41 +602,134 @@ def favorite_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def book_text(row: sqlite3.Row | dict[str, Any]) -> str:
+    return " ".join(
+        str(row.get(key, "") if isinstance(row, dict) else row[key] or "")
+        for key in ("title", "author", "category", "description")
+    )
+
+
+def tokenize(text: str) -> list[str]:
+    # English words/numbers and Chinese phrases are both useful in this dataset.
+    return [
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", text)
+        if len(token.strip()) >= 2
+    ]
+
+
+def tfidf_vectors(rows: list[sqlite3.Row]) -> tuple[list[dict[str, float]], dict[str, float]]:
+    documents = [tokenize(book_text(row)) for row in rows]
+    document_frequency: Counter[str] = Counter()
+    for tokens in documents:
+        document_frequency.update(set(tokens))
+
+    total_documents = max(len(documents), 1)
+    idf = {
+        token: math.log((total_documents + 1) / (frequency + 1)) + 1
+        for token, frequency in document_frequency.items()
+    }
+
+    vectors = []
+    for tokens in documents:
+        term_frequency = Counter(tokens)
+        vector = {
+            token: count * idf[token]
+            for token, count in term_frequency.items()
+        }
+        normalize_vector(vector)
+        vectors.append(vector)
+    return vectors, idf
+
+
+def normalize_vector(vector: dict[str, float]) -> None:
+    norm = math.sqrt(sum(value * value for value in vector.values()))
+    if norm == 0:
+        return
+    for key in list(vector.keys()):
+        vector[key] /= norm
+
+
+def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
+    if len(left) > len(right):
+        left, right = right, left
+    return sum(value * right.get(token, 0.0) for token, value in left.items())
+
+
+def user_interest_vector(
+    history: list[sqlite3.Row],
+    favorites: list[sqlite3.Row],
+    idf: dict[str, float],
+) -> dict[str, float]:
+    weighted_terms: Counter[str] = Counter()
+    for row in history:
+        weighted_terms.update({token: 3 for token in tokenize(row["keyword"])})
+    for row in favorites:
+        weighted_terms.update({token: 2 for token in tokenize(book_text(row))})
+
+    vector = {
+        token: count * idf.get(token, 1.0)
+        for token, count in weighted_terms.items()
+    }
+    normalize_vector(vector)
+    return vector
+
+
 def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -> list[dict[str, Any]]:
     if not user_id:
         rows = conn.execute(
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [item | {"reason": "默认推荐"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "默认推荐", "recommendation_method": "default"} for item in mark_favorites(conn, rows, user_id)]
 
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
     favs = favorite_rows(conn, user_id)
-    preferred_categories = Counter(r["category"] for r in favs)
-    keywords = [r["keyword"] for r in history]
 
     rows = conn.execute(
         """
         SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id
-        WHERE b.id NOT IN (SELECT book_id FROM favorites WHERE user_id=?)
         LIMIT 1500
         """,
-        (user_id,),
     ).fetchall()
+
+    favorite_ids = {fav["id"] for fav in favs}
+    candidate_rows = [row for row in rows if row["id"] not in favorite_ids]
+
+    if history or favs:
+        all_vectors, idf = tfidf_vectors(rows)
+        vector_by_id = {row["id"]: vector for row, vector in zip(rows, all_vectors)}
+        profile = user_interest_vector(history, favs, idf)
+        scored = []
+        for row in candidate_rows:
+            score = cosine_similarity(profile, vector_by_id.get(row["id"], {}))
+            if score > 0:
+                item = row_to_dict(row)
+                item["reason"] = f"TF-IDF 余弦相似度推荐：与搜索历史和收藏图书文本相似，相似度 {score:.3f}"
+                item["recommendation_method"] = "tfidf_cosine_similarity"
+                item["ml_score"] = round(score, 4)
+                item["is_favorite"] = False
+                scored.append((score, -row["id"], item))
+        if scored:
+            scored.sort(reverse=True)
+            return [item for _, _, item in scored[:limit]]
+
+    preferred_categories = Counter(r["category"] for r in favs)
+    keywords = [r["keyword"] for r in history]
     scored = []
-    for row in rows:
+    for row in candidate_rows:
         text = f"{row['title']} {row['author']} {row['category']} {row['description']}".lower()
         score = preferred_categories[row["category"]] * 4
         score += sum(2 for kw in keywords if kw.lower() in text)
         if score > 0:
-            reason = f"与你的搜索历史和{row['category']}类收藏相似"
-            scored.append((score, row["id"], row_to_dict(row) | {"reason": reason}))
+            reason = f"规则兜底推荐：与你的搜索历史和{row['category']}类收藏相似"
+            scored.append((score, row["id"], row_to_dict(row) | {"reason": reason, "recommendation_method": "rule_based", "is_favorite": False}))
     if not scored:
         rows = conn.execute(
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [item | {"reason": "暂无足够历史，显示馆藏推荐"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "暂无足够历史，显示馆藏推荐", "recommendation_method": "default"} for item in mark_favorites(conn, rows, user_id)]
     scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
     return [item[2] for item in scored[:limit]]
 
