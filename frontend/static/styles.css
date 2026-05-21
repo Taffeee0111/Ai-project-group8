@@ -43,6 +43,11 @@ button:hover {
   border-color: var(--primary);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 input,
 select {
   width: 100%;
@@ -463,10 +468,34 @@ section {
   place-items: center;
 }
 
+.cell.current {
+  background: #19a7ce;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  outline: 3px solid #083344;
+  outline-offset: -2px;
+}
+
 .metrics {
   margin-top: 14px;
   color: var(--muted);
   line-height: 1.7;
+}
+
+.route-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.route-controls span {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .route-steps {

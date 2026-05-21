@@ -106,6 +106,12 @@
               </div>
               <div id="favoriteSelector" class="selector-list"></div>
               <button class="primary wide" id="planButton">生成路径</button>
+              <div class="route-controls" id="routePlaybackControls">
+                <button id="playRouteButton" disabled>播放</button>
+                <button id="pauseRouteButton" disabled>暂停</button>
+                <button id="resetRouteButton" disabled>重置</button>
+                <span id="routeProgress">尚未生成路径</span>
+              </div>
               <div class="metrics" id="pathMetrics"></div>
               <div class="route-steps" id="routeSteps"></div>
             </section>
@@ -120,6 +126,7 @@
                 <span><i class="cell shelf"></i>书架</span>
                 <span><i class="cell target"></i>目标</span>
                 <span><i class="cell path"></i>路径</span>
+                <span><i class="cell current"></i>当前位置</span>
               </div>
               <div id="libraryGrid" class="library-grid"></div>
             </section>

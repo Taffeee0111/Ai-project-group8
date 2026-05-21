@@ -7,8 +7,12 @@ const state = {
   targets: [],
   segments: [],
   activeSegment: null,
+  playbackTimer: null,
+  playbackIndex: null,
   searchKeyword: "",
 };
+
+const ROUTE_PLAYBACK_INTERVAL_MS = 140;
 
 const titles = {
   login: ["登录 / 注册", "进入系统后可保存搜索历史、收藏和取书计划。"],
@@ -40,6 +44,7 @@ async function api(path, options = {}) {
 }
 
 function setPage(page) {
+  if (page !== "pickup") pauseRouteAnimation();
   state.page = page;
   document.querySelectorAll(".page").forEach((el) => el.classList.remove("active"));
   document.querySelectorAll(".nav-button").forEach((el) => el.classList.remove("active"));
@@ -181,6 +186,7 @@ async function unfavoriteBook(bookId) {
 }
 
 async function loadPickup() {
+  resetRouteAnimation();
   if (!state.token) {
     qs("#favoriteSelector").innerHTML = `<div class="profile-card">请先登录。</div>`;
     return;
@@ -209,12 +215,31 @@ function renderFavoriteSelector(favorites) {
   });
 }
 
-function renderMap() {
-  if (!state.map) return;
-  const visiblePath = state.activeSegment == null
+function getVisibleRoutePath() {
+  return state.activeSegment == null
     ? state.path
     : state.segments[state.activeSegment]?.path || [];
+}
+
+function getAnimatedPath() {
+  const path = getVisibleRoutePath();
+  if (!path.length || state.playbackIndex == null) return path;
+  return path.slice(0, Math.min(state.playbackIndex, path.length - 1) + 1);
+}
+
+function getCurrentPlaybackPoint() {
+  const path = getVisibleRoutePath();
+  if (!path.length || state.playbackIndex == null) return null;
+  return path[Math.min(state.playbackIndex, path.length - 1)];
+}
+
+function renderMap() {
+  if (!state.map) return;
+  const visiblePath = getAnimatedPath();
   const pathSet = new Set(visiblePath.map((p) => `${p[0]},${p[1]}`));
+  const currentPoint = getCurrentPlaybackPoint();
+  const currentKey = currentPoint ? `${currentPoint[0]},${currentPoint[1]}` : "";
+  const currentCellClass = "cell current";
   const targetByCell = new Map();
   state.targets.forEach((target, index) => {
     targetByCell.set(`${target.row},${target.col}`, index + 1);
@@ -234,10 +259,82 @@ function renderMap() {
         cell.className = "cell target";
         cell.textContent = targetByCell.get(`${r},${c}`);
       }
+      if (`${r},${c}` === currentKey) {
+        cell.className = targetByCell.has(currentKey) ? `${cell.className} current` : currentCellClass;
+        if (!targetByCell.has(currentKey)) cell.textContent = "●";
+      }
       cell.title = `(${r}, ${c})`;
       grid.appendChild(cell);
     }
   }
+}
+
+function updateRouteProgress() {
+  const path = getVisibleRoutePath();
+  const progress = qs("#routeProgress");
+  const playButton = qs("#playRouteButton");
+  const pauseButton = qs("#pauseRouteButton");
+  const resetButton = qs("#resetRouteButton");
+  if (!progress || !playButton || !pauseButton || !resetButton) return;
+
+  const hasPath = path.length > 0;
+  const isPlaying = Boolean(state.playbackTimer);
+  const frame = state.playbackIndex == null ? null : Math.min(state.playbackIndex, Math.max(path.length - 1, 0));
+
+  if (!hasPath) {
+    progress.textContent = "尚未生成路径";
+  } else if (frame == null) {
+    progress.textContent = `完整路径：${path.length} 格`;
+  } else {
+    const point = path[frame];
+    progress.textContent = `第 ${frame + 1} / ${path.length} 格：(${point[0]}, ${point[1]})`;
+  }
+
+  playButton.disabled = !hasPath || isPlaying;
+  pauseButton.disabled = !isPlaying;
+  resetButton.disabled = !hasPath;
+}
+
+function pauseRouteAnimation() {
+  if (state.playbackTimer) {
+    clearInterval(state.playbackTimer);
+    state.playbackTimer = null;
+  }
+  updateRouteProgress();
+}
+
+function resetRouteAnimation() {
+  pauseRouteAnimation();
+  state.playbackIndex = null;
+  renderMap();
+  updateRouteProgress();
+}
+
+function advanceRouteAnimation() {
+  const path = getVisibleRoutePath();
+  if (!path.length) {
+    resetRouteAnimation();
+    return;
+  }
+  if (state.playbackIndex == null) state.playbackIndex = 0;
+  if (state.playbackIndex >= path.length - 1) {
+    pauseRouteAnimation();
+    return;
+  }
+  state.playbackIndex += 1;
+  renderMap();
+  updateRouteProgress();
+}
+
+function playRouteAnimation() {
+  const path = getVisibleRoutePath();
+  if (!path.length || state.playbackTimer) return;
+  if (state.playbackIndex == null || state.playbackIndex >= path.length - 1) {
+    state.playbackIndex = 0;
+  }
+  renderMap();
+  state.playbackTimer = setInterval(advanceRouteAnimation, ROUTE_PLAYBACK_INTERVAL_MS);
+  updateRouteProgress();
 }
 
 function renderRouteSteps() {
@@ -281,6 +378,7 @@ async function planPath() {
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "greedy";
+  pauseRouteAnimation();
   let result;
   try {
     result = await api("/api/pickup/solve", {
@@ -292,15 +390,18 @@ async function planPath() {
     state.targets = [];
     state.segments = [];
     state.activeSegment = null;
+    state.playbackIndex = null;
     qs("#pathMetrics").textContent = err.message;
     renderRouteSteps();
     renderMap();
+    updateRouteProgress();
     return;
   }
   state.path = result.path || [];
   state.targets = result.visitOrder || [];
   state.segments = result.segments || [];
   state.activeSegment = null;
+  state.playbackIndex = null;
   qs("#pathMetrics").innerHTML = `
     <strong>算法指标</strong><br>
     求解方式：${escapeHtml(String(result.method || method).toUpperCase())}<br>
@@ -317,6 +418,7 @@ async function planPath() {
   `;
   renderRouteSteps();
   renderMap();
+  updateRouteProgress();
 }
 
 async function loadProfile() {
@@ -431,13 +533,19 @@ function bindEvents() {
   });
   qs("#refreshFavorites").addEventListener("click", loadPickup);
   qs("#planButton").addEventListener("click", planPath);
+  qs("#playRouteButton").addEventListener("click", playRouteAnimation);
+  qs("#pauseRouteButton").addEventListener("click", pauseRouteAnimation);
+  qs("#resetRouteButton").addEventListener("click", resetRouteAnimation);
   qs("#routeSteps").addEventListener("click", (event) => {
     const step = event.target.closest("[data-segment]");
     if (!step) return;
     const index = Number(step.dataset.segment);
+    pauseRouteAnimation();
     state.activeSegment = state.activeSegment === index ? null : index;
+    state.playbackIndex = null;
     renderRouteSteps();
     renderMap();
+    updateRouteProgress();
   });
   qs("#authSubmit").addEventListener("click", submitAuth);
   document.querySelectorAll(".toggle-password").forEach((button) => {
@@ -477,6 +585,7 @@ async function boot() {
   await loadMe();
   await searchBooks({ record: false });
   await loadRecommendations();
+  updateRouteProgress();
 }
 
 boot().catch((err) => {
