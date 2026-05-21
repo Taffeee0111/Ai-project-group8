@@ -507,10 +507,19 @@ class Handler(BaseHTTPRequestHandler):
         user_id = get_user(self)
         with connect() as conn:
             if path == "/api/auth/register":
+                username = (data.get("username") or "").strip()
+                password = data.get("password") or ""
+                confirm = data.get("confirmPassword")
+                if not username or not password:
+                    return json_response(self, 400, {"error": "请提供用户名和密码"})
+                if len(password) < 6:
+                    return json_response(self, 400, {"error": "密码至少需要 6 位"})
+                if confirm is not None and password != confirm:
+                    return json_response(self, 400, {"error": "两次输入的密码不一致"})
                 try:
                     conn.execute(
                         "INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)",
-                        (data["username"], hash_password(data["password"]), now()),
+                        (username, hash_password(password), now()),
                     )
                     return json_response(self, 201, {"ok": True})
                 except sqlite3.IntegrityError:

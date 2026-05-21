@@ -365,9 +365,22 @@ async function submitAuth() {
   const password = qs("#authPassword").value;
   try {
     if (isRegister) {
+      const confirm = qs("#authConfirmPassword") ? qs("#authConfirmPassword").value : "";
+      if (!username || !password || !confirm) {
+        qs("#authMessage").textContent = "请完整填写用户名和密码。";
+        return;
+      }
+      if (password !== confirm) {
+        qs("#authMessage").textContent = "两次输入的密码不一致。";
+        return;
+      }
+      if (password.length < 6) {
+        qs("#authMessage").textContent = "密码至少需要 6 位。";
+        return;
+      }
       await api("/api/auth/register", {
         method: "POST",
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, confirmPassword: confirm }),
       });
       qs("#authMessage").textContent = "注册成功，现在可以登录。";
       qs("#loginTab").click();
@@ -433,6 +446,13 @@ function switchAuth(register) {
   qs("#registerTab").classList.toggle("active", register);
   qs("#authSubmit").textContent = register ? "注册" : "登录";
   qs("#authMessage").textContent = register ? "创建一个新账号。" : "演示账号：demo / demo123";
+  // 显示或隐藏注册专用的确认密码输入
+  const confirmLabel = qs("#authConfirmLabel");
+  const confirmWrap = qs("#authConfirmWrap");
+  if (confirmLabel && confirmWrap) {
+    confirmLabel.style.display = register ? "block" : "none";
+    confirmWrap.style.display = register ? "block" : "none";
+  }
 }
 
 async function boot() {

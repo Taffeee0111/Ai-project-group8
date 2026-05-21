@@ -52,6 +52,11 @@
               <input id="authPassword" type="password" value="demo123" autocomplete="current-password" />
               <button type="button" class="toggle-password" data-target="authPassword" aria-label="显示密码" title="显示密码">👁</button>
             </div>
+            <label id="authConfirmLabel" style="display:none">确认密码</label>
+            <div class="password-field" id="authConfirmWrap" style="display:none">
+              <input id="authConfirmPassword" type="password" autocomplete="new-password" />
+              <button type="button" class="toggle-password" data-target="authConfirmPassword" aria-label="显示密码" title="显示密码">👁</button>
+            </div>
             <button class="primary" id="authSubmit">登录</button>
             <p class="hint" id="authMessage">演示账号：demo / demo123</p>
           </div>
