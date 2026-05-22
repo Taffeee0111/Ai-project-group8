@@ -1,0 +1,135 @@
+pages 3
+--- page 1 ---
+DI22001 - Algorithms and Artificial Intelligence 
+AI Project Assignment 
+This assignment is designed to give you an opportunity to apply Artificial Intelligence to a real-
+world problem, by defining a problem, obtaining relevant data, modelling it as needed 
+according to the definition of the problem, obtaining insights using the search strategies 
+covered in the module, and linking your work to relevant aspects of algorithms and their 
+complexity. This assignment is to be conducted in teams of 5 students and is worth 30% of 
+the module mark. 
+ 
+Brief 
+ 
+Building on lecture materials and lab exercises, your task is to identify an interesting problem 
+that can be solved, at least in part, by three of the search strategies we have studied  in 
+the AI part of the module. The choice of problem is unrestricted, but the size of the work 
+must be suitable for the available time (almost 6 weeks) and group size (5 people). 
+ 
+In choosing your problem and planning your work, keep in mind the four questions we have 
+discussed in class: 
+ 
+1. What is the AI problem that we want to solve? 
+2. Why it is an important problem to solve? 
+3. How can we solve it? 
+4. How can we solve it in a better way (faster, more robust, and efficient)? 
+ 
+You don’t need  to produce a project proposal this year, but you are still encouraged to  
+discuss your ideas  with us. Be prepared to describe your problem and its significance, the 
+dataset you will use, and what results you expect to get from the analysis. We will provide 
+feedback in terms of scope and suitability of the project. Based on this feedback, you should 
+carry out any preparations of the data and infrastructure to solve your  problem. You 
+should collect and interpret any results in terms of the problem definition, of the 
+performance of the chosen search strategies, and of their real -world meaning. Finally, you  
+should critically assess your work, identifying challenges, limitations, and opportunities for 
+improvement. Pay special attention to aspects of your approach that link the analysis to the 
+algorithms involved and their complexity (e.g. if you are forced to reduce the size of your 
+dataset so that you can run the analysis algorithms within your time and memory constraints). 
+ 
+You will report on your work in a  15-minute presentation to the lecturing team and the rest 
+of the class. The presentation should focus on the problem and its relevance, and the 
+results and interpretation of your results, avoiding technical details. At the end of the project, 
+you will submit a written report in which you can describe in more detail your approach,  the 
+strategies you used, your results and their interpretation, possible future enhancements, 
+and any relevant considerations linking your work to relevant algorithms and their complexity. 
+--- page 2 ---
+Above and beyond 
+ 
+Consider going beyond the project brief, by incorporating advanced techniques that were 
+briefly covered in class. Possible extensions include, but are not limited to: 
+• using CSP, planning to solve part of your problem, in addition to the 
+three search strategies 
+• developing a good, accessible interface to allow users to interact with 
+your tools and data 
+• using machine/deep learning techniques to solve part of your problem 
+ 
+Up to 20% of the project’s mark will come from extensions to material covered in class. 
+ 
+Submission & Assessment 
+ 
+This coursework is due for submission via MyDundee (under Assessment Area > 
+Assessment: AI Project > ...) , including presentation slides, final report, and 
+implementation code. 
+ 
+Deadlines: 
+ 
+• The project assignment is due on Wednesday 10 June (Week 15). 
+ 
+Project presentations will take place during Week 1 5 (presentation schedule to be 
+announced during Week 14). The slides and presentation are worth 30% of your 
+total grade for this assignment. The report is also worth 30% of your total grade for 
+this assignment. The implementation code is worth 20% of your total grade for 
+this assignment. The remaining 20% of your total grade for this assignment will be given 
+based on above and beyond as explained above. 
+Submissions should be made by one member of your team. All elements submitted 
+should include the names and matriculation numbers of all team members. 
+Your submissions should be as follows: 
+ 
+• Professional-looking slides for a 10-minute presentation as a 
+PowerPoint or PDF document , including the title of your project, the 
+names of the participants, a description of the problem and its 
+relevance, a description of your dataset and your approach to solving  
+the problem using search strategies, the results of your analysis and their 
+interpretation, anything you have done that is above and beyond the scope 
+of the brief, and a conclusion; All the implementation code that you created 
+and used in your assignment as a ZIP file, readable, fully  commented and 
+with suitable references to any code re-used; A 2-page prof essional-
+looking report (~1500 words, excluding any  references and figure)  as a 
+Word or PDF document , with word count given,  describing your
+--- page 3 ---
+problem, the dataset, your approach to solving it, the results you 
+obtained and their interpretation, possible future enhancements,  and 
+any relevant considerations linking your work to the algorithms involved 
+and their complexity. 
+Check that the contents of your files are correct; keep a copy of what you submit in case 
+there are problems with your submission. 
+ 
+Peer Reviews 
+ 
+The marks and feedback resulting from your submissions will be your group’s mark. 
+Individual marks are calculated based on the peer reviews, and this is the only way we can 
+incorporate individual contributions to groupwork. It is essential that all team members 
+submit a peer review which quantifies their own and other members' contributions to 
+the work. 
+Peer reviews are moderated by the module lecturers and any changes to an individual mark 
+(upwards or downwards) from the team mark will result from consensus in peer reviews 
+from the entire team as to how much an individual contributed to the total workload. 
+ 
+If you have awarded someone in your team a greater or lesser contribution than others, 
+please provide comments to justify your decision. In doing so, you may wish to reflect upon 
+the following: 
+ 
+• were tasks outlined and were these agreed and clear to everyone in the group 
+and when the deadlines were; 
+• did people contribute and complete their tasks to the best of their ability; 
+• where tasks completed on time; 
+• did people attend group meetings; 
+• did people communicate well and keep each other aware of progress; 
+• were the contributions adequate and to an acceptable standard (bearing in mind 
+different skill levels within the team). 
+ 
+Peer reviews will be submitted via MyDundee.  An assignment will be set up nearer the 
+time of the deadline. 
+ 
+Presentations 
+ 
+Each team will be allocated a 15 -minute slot for presenting their work.  Presentations 
+should last 10 minutes, with 5 minutes left for questions from the audience. Every team 
+member should be present in the presentation, but not everyone must speak. 
+Avoid technical details in your presentation and focus on the 4 questions above. Describe 
+your problem and motivate its relevance. Present the source and properties of your data. 
+Discuss the search strategies and, if applicable, any other techniques you used to solve 
+the problem. Describe the results and, crucially, their interpretation in terms of the real -
+world problem you chose to address. Motivate your audience to engage with the 
+problem and with your results. 
+ 

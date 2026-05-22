@@ -88,6 +88,17 @@
         <section class="page" id="pickupPage">
           <div class="pickup-layout">
             <section class="pickup-panel">
+              <div class="section-title">
+                <h2>本次取书</h2>
+                <span id="pickupCount">0 本</span>
+              </div>
+              <div class="pickup-actions">
+                <button id="openFavoritesButton">我的收藏</button>
+                <button id="openSearchPickerButton">搜索想看的书</button>
+              </div>
+              <div id="pickupSelection" class="pickup-selection"></div>
+              <button id="clearPickupButton" class="wide">清空本次取书</button>
+              <div class="selection-note" id="selectionNote">Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。</div>
               <label class="top-label" for="solverSelect">求解方式</label>
               <select id="solverSelect">
                 <option value="greedy">Greedy（最近邻）</option>
@@ -100,11 +111,6 @@
                 <option value="bfs">BFS</option>
                 <option value="ucs">Uniform Cost Search</option>
               </select>
-              <div class="section-title">
-                <h2>选择要取的书</h2>
-                <button id="refreshFavorites">刷新</button>
-              </div>
-              <div id="favoriteSelector" class="selector-list"></div>
               <button class="primary wide" id="planButton">生成路径</button>
               <div class="route-controls" id="routePlaybackControls">
                 <button id="playRouteButton" disabled>播放</button>
@@ -176,6 +182,30 @@
           </div>
         </section>
       </main>
+    </div>
+    <div class="modal-backdrop" id="bookPickerModal" hidden>
+      <section class="book-picker" role="dialog" aria-modal="true" aria-labelledby="bookPickerTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="bookPickerTitle">选择图书</h2>
+            <p id="bookPickerSubtitle">勾选后加入本次取书。</p>
+          </div>
+          <button class="icon-button" id="closeBookPicker" aria-label="关闭">×</button>
+        </div>
+        <div class="picker-search" id="pickerSearchBar">
+          <input id="pickerSearchInput" placeholder="输入书名、作者、分类或简介关键词" />
+          <button class="primary" id="pickerSearchButton">搜索</button>
+        </div>
+        <div class="picker-toolbar">
+          <label><input type="checkbox" id="pickerSelectAll" /> 全选当前列表</label>
+          <span id="pickerStatus">0 本可选</span>
+        </div>
+        <div id="pickerList" class="picker-list"></div>
+        <div class="modal-actions">
+          <button id="cancelBookPicker">取消</button>
+          <button class="primary" id="confirmBookPicker">加入本次取书</button>
+        </div>
+      </section>
     </div>
     <script src="/app.js"></script>
   </body>

@@ -10,6 +10,10 @@ const state = {
   playbackTimer: null,
   playbackIndex: null,
   searchKeyword: "",
+  pickupSelection: [],
+  pickerMode: "",
+  pickerItems: [],
+  pickerTempSelected: new Set(),
 };
 
 const ROUTE_PLAYBACK_INTERVAL_MS = 140;
@@ -188,31 +192,173 @@ async function unfavoriteBook(bookId) {
 async function loadPickup() {
   resetRouteAnimation();
   if (!state.token) {
-    qs("#favoriteSelector").innerHTML = `<div class="profile-card">请先登录。</div>`;
+    qs("#pickupSelection").innerHTML = `<div class="profile-card">请先登录，再创建本次取书任务。</div>`;
+    qs("#pickupCount").textContent = "0 本";
     return;
   }
-  const [favorites, map] = await Promise.all([api("/api/favorites"), api("/api/library-map")]);
+  const map = await api("/api/library-map");
   state.map = map;
-  renderFavoriteSelector(favorites);
+  renderPickupSelection();
   renderMap();
 }
 
-function renderFavoriteSelector(favorites) {
-  const box = qs("#favoriteSelector");
+function selectedPickupIds() {
+  return new Set(state.pickupSelection.map((book) => Number(book.id)));
+}
+
+function renderPickupSelection() {
+  const box = qs("#pickupSelection");
   box.innerHTML = "";
-  if (!favorites.length) {
-    box.innerHTML = `<div class="profile-card">还没有收藏图书。先去搜索页面收藏几本书。</div>`;
+  qs("#pickupCount").textContent = `${state.pickupSelection.length} 本`;
+  if (!state.pickupSelection.length) {
+    box.innerHTML = `<div class="profile-card">还没有选择图书。可以从“我的收藏”或“搜索想看的书”加入本次取书。</div>`;
+    qs("#selectionNote").textContent = "Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。";
     return;
   }
-  favorites.forEach((book) => {
-    const item = document.createElement("label");
-    item.className = "selector-item";
+
+  state.pickupSelection.forEach((book, index) => {
+    const item = document.createElement("article");
+    item.className = "selected-book";
     item.innerHTML = `
-      <input type="checkbox" value="${book.id}">
-      <span><strong>${escapeHtml(book.title)}</strong><br><span class="book-meta">${book.category} · ${book.shelf_id} (${book.row}, ${book.col})</span></span>
+      <span class="selection-index">${index + 1}</span>
+      <span>
+        <strong>${escapeHtml(book.title)}</strong>
+        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "未分类")} · ${escapeHtml(book.shelf_id)} (${book.row}, ${book.col})</span>
+      </span>
+      <button data-remove-pickup="${book.id}" aria-label="移除 ${escapeHtml(book.title)}">移除</button>
     `;
     box.appendChild(item);
   });
+
+  const overLimit = state.pickupSelection.length > 10;
+  qs("#selectionNote").textContent = overLimit
+    ? `已选择 ${state.pickupSelection.length} 本。Greedy 可继续使用，Planning / CSP 最多支持 10 本。`
+    : "Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。";
+}
+
+function resetPlannedRoute() {
+  pauseRouteAnimation();
+  state.path = [];
+  state.targets = [];
+  state.segments = [];
+  state.activeSegment = null;
+  state.playbackIndex = null;
+  renderRouteSteps();
+  renderMap();
+  updateRouteProgress();
+}
+
+function removePickupBook(bookId) {
+  state.pickupSelection = state.pickupSelection.filter((book) => Number(book.id) !== Number(bookId));
+  resetPlannedRoute();
+  renderPickupSelection();
+}
+
+function clearPickupSelection() {
+  state.pickupSelection = [];
+  resetPlannedRoute();
+  renderPickupSelection();
+}
+
+function openPicker(mode, items = []) {
+  state.pickerMode = mode;
+  state.pickerItems = items;
+  state.pickerTempSelected = selectedPickupIds();
+  qs("#bookPickerModal").hidden = false;
+  qs("#bookPickerTitle").textContent = mode === "favorites" ? "我的收藏" : "搜索想看的书";
+  qs("#bookPickerSubtitle").textContent = mode === "favorites"
+    ? "从收藏中勾选本次要取的书。"
+    : "搜索结果可以直接加入本次取书，不需要先收藏。";
+  qs("#pickerSearchBar").style.display = mode === "search" ? "grid" : "none";
+  qs("#pickerSearchInput").value = "";
+  renderPickerList();
+}
+
+function closePicker() {
+  qs("#bookPickerModal").hidden = true;
+  state.pickerItems = [];
+  state.pickerTempSelected = new Set();
+}
+
+async function openFavoritesPicker() {
+  if (!state.token) {
+    setPage("login");
+    return;
+  }
+  const favorites = await api("/api/favorites");
+  openPicker("favorites", favorites);
+}
+
+async function openSearchPicker() {
+  if (!state.token) {
+    setPage("login");
+    return;
+  }
+  openPicker("search", []);
+  qs("#pickerSearchInput").focus();
+}
+
+async function searchPickerBooks() {
+  const keyword = qs("#pickerSearchInput").value.trim();
+  state.pickerItems = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}&record=0`);
+  renderPickerList();
+}
+
+function renderPickerList() {
+  const list = qs("#pickerList");
+  const selected = state.pickerTempSelected;
+  list.innerHTML = "";
+  qs("#pickerStatus").textContent = `${state.pickerItems.length} 本可选，已勾选 ${selected.size} 本`;
+  qs("#pickerSelectAll").checked = state.pickerItems.length > 0 && state.pickerItems.every((book) => selected.has(Number(book.id)));
+
+  if (!state.pickerItems.length) {
+    list.innerHTML = `<div class="profile-card">${state.pickerMode === "search" ? "输入关键词后搜索图书。" : "还没有收藏图书。"}</div>`;
+    return;
+  }
+
+  const alreadySelected = selectedPickupIds();
+  state.pickerItems.forEach((book) => {
+    const checked = selected.has(Number(book.id));
+    const item = document.createElement("label");
+    item.className = "picker-item";
+    item.innerHTML = `
+      <input type="checkbox" value="${book.id}" ${checked ? "checked" : ""}>
+      <span>
+        <strong>${escapeHtml(book.title)}</strong>
+        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "未分类")} · 书架 ${escapeHtml(book.shelf_id)} / 坐标 (${book.row}, ${book.col})</span>
+      </span>
+      ${alreadySelected.has(Number(book.id)) ? `<em>已在篮中</em>` : ""}
+    `;
+    list.appendChild(item);
+  });
+}
+
+function togglePickerItem(bookId, checked) {
+  const id = Number(bookId);
+  if (checked) state.pickerTempSelected.add(id);
+  else state.pickerTempSelected.delete(id);
+  renderPickerList();
+}
+
+function togglePickerSelectAll(checked) {
+  state.pickerItems.forEach((book) => {
+    const id = Number(book.id);
+    if (checked) state.pickerTempSelected.add(id);
+    else state.pickerTempSelected.delete(id);
+  });
+  renderPickerList();
+}
+
+function confirmPickerSelection() {
+  const byId = new Map(state.pickupSelection.map((book) => [Number(book.id), book]));
+  state.pickerItems.forEach((book) => {
+    const id = Number(book.id);
+    if (state.pickerTempSelected.has(id)) byId.set(id, book);
+  });
+  state.pickupSelection = [...byId.values()];
+  resetPlannedRoute();
+  renderPickupSelection();
+  closePicker();
 }
 
 function getVisibleRoutePath() {
@@ -371,9 +517,9 @@ function renderRouteSteps() {
 }
 
 async function planPath() {
-  const ids = [...document.querySelectorAll("#favoriteSelector input:checked")].map((el) => Number(el.value));
+  const ids = state.pickupSelection.map((book) => Number(book.id));
   if (!ids.length) {
-    qs("#pathMetrics").textContent = "请至少选择一本收藏图书。";
+    qs("#pathMetrics").textContent = "请至少选择一本想取的书。";
     return;
   }
   const algorithm = qs("#algorithmSelect").value;
@@ -528,10 +674,29 @@ function bindEvents() {
   document.body.addEventListener("click", (event) => {
     const toggle = event.target.closest("[data-fav-toggle]");
     const unfav = event.target.closest("[data-unfav]");
+    const removePickup = event.target.closest("[data-remove-pickup]");
     if (toggle) toggleFavorite(toggle.dataset.favToggle, toggle.dataset.favorite === "true");
     if (unfav) unfavoriteBook(unfav.dataset.unfav);
+    if (removePickup) removePickupBook(removePickup.dataset.removePickup);
   });
-  qs("#refreshFavorites").addEventListener("click", loadPickup);
+  qs("#openFavoritesButton").addEventListener("click", openFavoritesPicker);
+  qs("#openSearchPickerButton").addEventListener("click", openSearchPicker);
+  qs("#clearPickupButton").addEventListener("click", clearPickupSelection);
+  qs("#closeBookPicker").addEventListener("click", closePicker);
+  qs("#cancelBookPicker").addEventListener("click", closePicker);
+  qs("#confirmBookPicker").addEventListener("click", confirmPickerSelection);
+  qs("#pickerSearchButton").addEventListener("click", searchPickerBooks);
+  qs("#pickerSearchInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchPickerBooks();
+  });
+  qs("#pickerSelectAll").addEventListener("change", (event) => togglePickerSelectAll(event.target.checked));
+  qs("#pickerList").addEventListener("change", (event) => {
+    const input = event.target.closest("input[type='checkbox']");
+    if (input) togglePickerItem(input.value, input.checked);
+  });
+  qs("#bookPickerModal").addEventListener("click", (event) => {
+    if (event.target.id === "bookPickerModal") closePicker();
+  });
   qs("#planButton").addEventListener("click", planPath);
   qs("#playRouteButton").addEventListener("click", playRouteAnimation);
   qs("#pauseRouteButton").addEventListener("click", pauseRouteAnimation);

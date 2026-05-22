@@ -399,6 +399,172 @@ section {
   margin-top: 3px;
 }
 
+.pickup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pickup-selection {
+  display: grid;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.selected-book {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.selected-book strong,
+.picker-item strong {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.selection-index {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #e6f4f1;
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.selection-note {
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.46);
+  padding: 24px;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.book-picker {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  background: var(--panel);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.modal-head,
+.modal-actions,
+.picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-head h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.modal-head p,
+.picker-toolbar span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.picker-search {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 10px;
+  padding: 16px 18px 0;
+}
+
+.picker-toolbar {
+  border-bottom: 0;
+  padding-top: 12px;
+  padding-bottom: 10px;
+}
+
+.picker-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.picker-toolbar input,
+.picker-item input {
+  width: auto;
+}
+
+.picker-list {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 0 18px 18px;
+}
+
+.picker-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.picker-item em {
+  color: var(--primary-dark);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -567,6 +733,30 @@ section {
   .pickup-layout,
   .profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pickup-actions,
+  .picker-search {
+    grid-template-columns: 1fr;
+  }
+
+  .book-picker {
+    max-height: calc(100vh - 24px);
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .selected-book,
+  .picker-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .selected-book button,
+  .picker-item em {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .map-panel {
