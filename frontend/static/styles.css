@@ -402,19 +402,23 @@ section {
   align-self: start;
   max-height: calc(100vh - 52px);
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, auto);
+  grid-template-rows: auto auto minmax(0, auto);
   overflow: hidden;
 }
 
-.map-title-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: -2px 0 4px;
+.map-canvas {
+  position: relative;
+  width: min(100%, calc(100vh - 178px));
+  max-width: 100%;
+  aspect-ratio: 1;
+  justify-self: center;
 }
 
 .map-expand-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 8;
   width: 30px;
   height: 30px;
   display: grid;
@@ -529,14 +533,16 @@ section {
 .pickup-empty-mark {
   width: 28px;
   height: 28px;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   background: #e6f4f1;
   color: var(--primary-dark);
   font-size: 18px;
   font-weight: 800;
   line-height: 1;
+  padding-bottom: 1px;
 }
 
 .add-book-menu {
@@ -680,10 +686,14 @@ section {
 .icon-button {
   width: 34px;
   height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border-radius: 999px;
   font-size: 22px;
   line-height: 1;
+  padding-bottom: 2px;
 }
 
 .picker-search {
@@ -875,8 +885,8 @@ section {
   position: relative;
   display: grid;
   grid-template-columns: repeat(30, minmax(0, 1fr));
-  width: min(100%, calc(100vh - 178px));
-  max-width: 100%;
+  width: 100%;
+  max-width: none;
   aspect-ratio: 1;
   justify-self: center;
   gap: clamp(1px, 0.22vw, 2px);
@@ -884,6 +894,11 @@ section {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: clamp(4px, 0.8vw, 8px);
+}
+
+.library-grid.library-grid-large {
+  width: min(calc(100vh - 150px), calc(100vw - 72px), 900px);
+  max-width: 100%;
 }
 
 .cell {
@@ -1194,7 +1209,7 @@ section {
     overflow: hidden;
   }
 
-  .library-grid {
+  .map-canvas {
     width: min(100%, calc(100vh - 148px));
   }
 
@@ -1253,7 +1268,7 @@ section {
     flex-basis: 12px;
   }
 
-  .library-grid {
+  .map-canvas {
     width: min(100%, calc(100vh - 136px));
   }
 }
