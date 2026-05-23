@@ -88,17 +88,59 @@
         <section class="page" id="pickupPage">
           <div class="pickup-layout">
             <section class="pickup-panel">
+              <div class="section-title route-control-title">
+                <h2>路线控制</h2>
+              </div>
+              <button class="primary wide" id="planButton">生成路径</button>
+              <div class="route-controls" id="routePlaybackControls">
+                <button id="playRouteButton" disabled>播放</button>
+                <button id="pauseRouteButton" disabled>暂停</button>
+                <button id="resetRouteButton" disabled>重置</button>
+              </div>
+              <div class="status-note" id="algorithmSummary">当前算法：Greedy + A* Search</div>
               <div class="section-title">
                 <h2>本次取书</h2>
-                <span id="pickupCount">0 本</span>
-              </div>
-              <div class="pickup-actions">
-                <button id="openFavoritesButton">我的收藏</button>
-                <button id="openSearchPickerButton">搜索想看的书</button>
+                <div class="pickup-title-actions">
+                  <span id="pickupCount">0 本</span>
+                  <button class="clear-pickup-button" id="clearPickupButton" title="清空本次取书" aria-label="清空本次取书">🗑</button>
+                </div>
               </div>
               <div id="pickupSelection" class="pickup-selection"></div>
-              <button id="clearPickupButton" class="wide">清空本次取书</button>
-              <div class="selection-note" id="selectionNote">Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。</div>
+              <div class="add-book-menu" id="addBookMenu" hidden>
+                <button id="openFavoritesButton">从我的收藏选择</button>
+                <button id="openSearchPickerButton">搜索想看的书</button>
+              </div>
+              <div class="status-note" id="selectedSeatInfo">终点座位：无</div>
+              <div class="section-title route-steps-title">
+                <h2>取书步骤</h2>
+                <span id="routeStepCount">0 步</span>
+              </div>
+              <div class="route-steps" id="routeSteps"></div>
+            </section>
+            <section class="map-panel">
+              <div class="section-title">
+                <h2>30 × 30 图书馆地图</h2>
+                <div class="map-title-actions">
+                  <span id="mapShelfCount">书架布局</span>
+                  <button class="map-expand-button" id="openMapModal" title="放大地图" aria-label="放大地图">⛶</button>
+                </div>
+              </div>
+              <div class="legend">
+                <span><i class="cell entrance"></i>入口</span>
+                <span><i class="cell reading"></i>阅读区</span>
+                <span><i class="cell crowded"></i>拥堵区</span>
+                <span><i class="cell shelf"></i>书架</span>
+                <span><i class="cell target"></i>目标</span>
+                <span><i class="cell seat"></i>座位</span>
+                <span><i class="cell path"></i>路径</span>
+                <span><i class="cell current"></i>当前位置</span>
+              </div>
+              <div id="libraryGrid" class="library-grid"></div>
+            </section>
+            <section class="algorithm-panel">
+              <div class="section-title">
+                <h2>算法设置与分析</h2>
+              </div>
               <label class="top-label" for="solverSelect">求解方式</label>
               <select id="solverSelect">
                 <option value="greedy">Greedy（最近邻）</option>
@@ -111,30 +153,10 @@
                 <option value="bfs">BFS</option>
                 <option value="ucs">Uniform Cost Search</option>
               </select>
-              <button class="primary wide" id="planButton">生成路径</button>
-              <div class="route-controls" id="routePlaybackControls">
-                <button id="playRouteButton" disabled>播放</button>
-                <button id="pauseRouteButton" disabled>暂停</button>
-                <button id="resetRouteButton" disabled>重置</button>
-                <span id="routeProgress">尚未生成路径</span>
+              <div class="metrics" id="pathMetrics">
+                <strong>等待生成路径</strong><br>
+                选择图书和座位后，点击左侧“生成路径”查看算法指标。
               </div>
-              <div class="metrics" id="pathMetrics"></div>
-              <div class="route-steps" id="routeSteps"></div>
-            </section>
-            <section class="map-panel">
-              <div class="section-title">
-                <h2>24 × 24 图书馆地图</h2>
-                <span>300 个书架</span>
-              </div>
-              <div class="legend">
-                <span><i class="cell entrance"></i>入口</span>
-                <span><i class="cell exit"></i>出口</span>
-                <span><i class="cell shelf"></i>书架</span>
-                <span><i class="cell target"></i>目标</span>
-                <span><i class="cell path"></i>路径</span>
-                <span><i class="cell current"></i>当前位置</span>
-              </div>
-              <div id="libraryGrid" class="library-grid"></div>
             </section>
           </div>
         </section>
@@ -182,6 +204,35 @@
           </div>
         </section>
       </main>
+    </div>
+    <div class="map-modal" id="mapModal" hidden>
+      <section class="map-modal-panel" role="dialog" aria-modal="true" aria-labelledby="mapModalTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="mapModalTitle">30 × 30 图书馆地图</h2>
+            <p>点击绿色阅读区可选择座位终点。</p>
+          </div>
+          <button class="icon-button" id="closeMapModal" aria-label="关闭">×</button>
+        </div>
+        <div class="legend map-modal-legend">
+          <span><i class="cell entrance"></i>入口</span>
+          <span><i class="cell reading"></i>阅读区</span>
+          <span><i class="cell crowded"></i>拥堵区</span>
+          <span><i class="cell shelf"></i>书架</span>
+          <span><i class="cell target"></i>目标</span>
+          <span><i class="cell seat"></i>座位</span>
+          <span><i class="cell path"></i>路径</span>
+          <span><i class="cell current"></i>当前位置</span>
+        </div>
+        <div id="libraryGridLarge" class="library-grid library-grid-large"></div>
+      </section>
+    </div>
+    <div class="notice-modal" id="noticeModal" hidden>
+      <section class="notice-panel" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
+        <h2 id="noticeTitle">需要选择终点座位</h2>
+        <p id="noticeMessage">需要点击绿色格子来确定最终座位。</p>
+        <button class="primary" id="closeNoticeModal">知道了</button>
+      </section>
     </div>
     <div class="modal-backdrop" id="bookPickerModal" hidden>
       <section class="book-picker" role="dialog" aria-modal="true" aria-labelledby="bookPickerTitle">

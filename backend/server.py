@@ -24,10 +24,31 @@ FRONTEND_DIR = ROOT / "frontend" / "static"
 BOOK_DOCX = ROOT / "backend" / "data" / "book_collection_filled_1500.docx"
 
 TOKENS: dict[str, int] = {}
-GRID_SIZE = 24
-SHELF_ROWS = list(range(2, 22))
-SHELF_COLS = [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 19, 20, 22]
-AISLES = set(range(GRID_SIZE)) - set(SHELF_COLS)
+GRID_SIZE = 30
+ENTRANCE = (0, 0)
+CELL_EMPTY = 0
+CELL_SHELF = 1
+CELL_ENTRANCE = 2
+CELL_CROWDED = 4
+CELL_READING = 5
+
+SHELF_GROUPS = [
+    (range(2, 8), [2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27]),
+    (range(10, 20), [2, 3, 6, 7, 22, 23, 26, 27]),
+    (range(22, 28), [2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23]),
+    (range(22, 28), [26, 27]),
+]
+CROWDED_ROWS = range(9, 21)
+CROWDED_COLS = range(9, 21)
+READING_AREAS = [
+    (range(10, 12), range(10, 14)),
+    (range(10, 12), range(16, 20)),
+    (range(14, 16), range(10, 14)),
+    (range(14, 16), range(16, 20)),
+    (range(18, 20), range(10, 14)),
+    (range(18, 20), range(16, 20)),
+]
+DEFAULT_SEAT = (10, 10)
 
 
 def connect() -> sqlite3.Connection:
@@ -69,13 +90,29 @@ def parse_docx_table(path: Path) -> list[dict[str, str]]:
 
 
 def generate_shelves() -> list[tuple[str, int, int, str]]:
-    shelves = []
-    idx = 1
-    for row in SHELF_ROWS:
-        for col in SHELF_COLS:
-            shelves.append((f"S{idx:03d}", row, col, "shelf"))
-            idx += 1
-    return shelves
+    positions = []
+    seen = set()
+    for rows, cols in SHELF_GROUPS:
+        for row in rows:
+            for col in cols:
+                if (row, col) not in seen:
+                    positions.append((row, col))
+                    seen.add((row, col))
+    return [(f"S{idx:03d}", row, col, "shelf") for idx, (row, col) in enumerate(positions, start=1)]
+
+
+def shelf_id_for_book(index: int) -> str:
+    shelf_count = len(generate_shelves())
+    return f"S{((index - 1) % shelf_count) + 1:03d}"
+
+
+def reading_seats() -> list[tuple[int, int]]:
+    seats = []
+    for rows, cols in READING_AREAS:
+        for row in rows:
+            for col in cols:
+                seats.append((row, col))
+    return seats
 
 
 def assign_books_to_shelves(records: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -99,7 +136,6 @@ def assign_books_to_shelves(records: list[dict[str, str]]) -> list[dict[str, Any
     ordered = pure + remainder
     assigned = []
     for index, (category, record) in enumerate(ordered, start=1):
-        shelf_num = math.ceil(index / 5)
         assigned.append(
             {
                 "book_id": f"B{index:04d}",
@@ -109,8 +145,8 @@ def assign_books_to_shelves(records: list[dict[str, str]]) -> list[dict[str, Any
                 "pages": record.get("页数（可选）", ""),
                 "description": record.get("简介（可选）", ""),
                 "category": category,
-                "shelf_id": f"S{shelf_num:03d}",
-                "shelf_slot": ((index - 1) % 5) + 1,
+                "shelf_id": shelf_id_for_book(index),
+                "shelf_slot": ((index - 1) // len(generate_shelves())) + 1,
                 "status": "available",
             }
         )
@@ -131,8 +167,8 @@ def fallback_books() -> list[dict[str, Any]]:
                 "pages": "300",
                 "description": f"一本用于演示{cat}分类搜索和推荐的图书。",
                 "category": cat,
-                "shelf_id": f"S{math.ceil(i / 5):03d}",
-                "shelf_slot": ((i - 1) % 5) + 1,
+                "shelf_id": shelf_id_for_book(i),
+                "shelf_slot": ((i - 1) // len(generate_shelves())) + 1,
                 "status": "available",
             }
         )
@@ -188,12 +224,23 @@ def init_db() -> None:
             );
             """
         )
-        shelf_count = conn.execute("SELECT COUNT(*) FROM shelves").fetchone()[0]
-        if shelf_count == 0:
-            conn.executemany(
-                "INSERT INTO shelves(id,row,col,pattern,capacity) VALUES(?,?,?,?,5)",
-                generate_shelves(),
-            )
+        shelves = generate_shelves()
+        conn.executemany(
+            """
+            INSERT INTO shelves(id,row,col,pattern,capacity) VALUES(?,?,?,?,5)
+            ON CONFLICT(id) DO UPDATE SET
+                row=excluded.row,
+                col=excluded.col,
+                pattern=excluded.pattern,
+                capacity=excluded.capacity
+            """,
+            shelves,
+        )
+        shelf_ids = [shelf[0] for shelf in shelves]
+        conn.execute(
+            f"DELETE FROM shelves WHERE id NOT IN ({','.join('?' for _ in shelf_ids)})",
+            shelf_ids,
+        )
         book_count = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
         if book_count == 0:
             records = parse_docx_table(BOOK_DOCX) if BOOK_DOCX.exists() else []
@@ -204,6 +251,15 @@ def init_db() -> None:
                 VALUES(:book_id,:source_index,:title,:author,:pages,:description,:category,:shelf_id,:shelf_slot,:status)
                 """,
                 books,
+            )
+        else:
+            rows = conn.execute("SELECT id FROM books ORDER BY id").fetchall()
+            conn.executemany(
+                "UPDATE books SET shelf_id=?, shelf_slot=? WHERE id=?",
+                [
+                    (shelf_id_for_book(index), ((index - 1) // len(shelves)) + 1, row["id"])
+                    for index, row in enumerate(rows, start=1)
+                ],
             )
         user = conn.execute("SELECT id FROM users WHERE username='demo'").fetchone()
         if not user:
@@ -246,22 +302,51 @@ def get_user(handler: BaseHTTPRequestHandler) -> int | None:
 
 
 def grid() -> list[list[int]]:
-    cells = [[0 for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-    for row in SHELF_ROWS:
-        for col in SHELF_COLS:
-            cells[row][col] = 1
-    cells[0][0] = 2
-    cells[23][23] = 3
+    cells = [[CELL_EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+    for row in CROWDED_ROWS:
+        for col in CROWDED_COLS:
+            cells[row][col] = CELL_CROWDED
+    for row, col in reading_seats():
+        cells[row][col] = CELL_READING
+    for _, row, col, _ in generate_shelves():
+        cells[row][col] = CELL_SHELF
+    cells[ENTRANCE[0]][ENTRANCE[1]] = CELL_ENTRANCE
     return cells
 
 
-def neighbors(point: tuple[int, int]) -> list[tuple[int, int]]:
+def is_reading_cell(point: tuple[int, int]) -> bool:
+    row, col = point
+    return 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and grid()[row][col] == CELL_READING
+
+
+def is_walkable(point: tuple[int, int], target: tuple[int, int] | None = None) -> bool:
+    row, col = point
+    if not (0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE):
+        return False
+    value = grid()[row][col]
+    if value == CELL_SHELF:
+        return False
+    if value == CELL_READING and point != target:
+        return False
+    return True
+
+
+def movement_cost(point: tuple[int, int]) -> int:
+    row, col = point
+    return 2 if grid()[row][col] == CELL_CROWDED else 1
+
+
+def path_cost(path: list[list[int]]) -> int:
+    return sum(movement_cost((row, col)) for row, col in (tuple(p) for p in path[1:]))
+
+
+def neighbors(point: tuple[int, int], target: tuple[int, int] | None = None) -> list[tuple[int, int]]:
     cells = grid()
     result = []
     row, col = point
     for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
         nr, nc = row + dr, col + dc
-        if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and cells[nr][nc] != 1:
+        if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and cells[nr][nc] != CELL_SHELF and is_walkable((nr, nc), target):
             result.append((nr, nc))
     return result
 
@@ -278,6 +363,8 @@ def reconstruct(came_from: dict[tuple[int, int], tuple[int, int] | None], end: t
 def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str) -> dict[str, Any]:
     started = time.perf_counter()
     expanded = 0
+    if not is_walkable(start, target) or not is_walkable(target, target):
+        return {"path": [], "distance": None, "expanded": expanded, "runtimeMs": elapsed(started)}
 
     if algorithm == "bfs":
         queue = deque([start])
@@ -287,8 +374,8 @@ def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str)
             expanded += 1
             if current == target:
                 path = reconstruct(came_from, target)
-                return {"path": path, "distance": len(path) - 1, "expanded": expanded, "runtimeMs": elapsed(started)}
-            for nxt in neighbors(current):
+                return {"path": path, "distance": path_cost(path), "expanded": expanded, "runtimeMs": elapsed(started)}
+            for nxt in neighbors(current, target):
                 if nxt not in came_from:
                     came_from[nxt] = current
                     queue.append(nxt)
@@ -307,8 +394,8 @@ def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str)
             if current == target:
                 path = reconstruct(came_from, target)
                 return {"path": path, "distance": current_cost, "expanded": expanded, "runtimeMs": elapsed(started)}
-            for nxt in neighbors(current):
-                new_cost = current_cost + 1
+            for nxt in neighbors(current, target):
+                new_cost = current_cost + movement_cost(nxt)
                 if nxt not in cost or new_cost < cost[nxt]:
                     cost[nxt] = new_cost
                     came_from[nxt] = current
@@ -325,9 +412,8 @@ def elapsed(started: float) -> float:
 def pickup_point(shelf: sqlite3.Row) -> tuple[int, int]:
     row, col = shelf["row"], shelf["col"]
     candidates = [(row, col - 1), (row, col + 1), (row - 1, col), (row + 1, col)]
-    cells = grid()
     for r, c in candidates:
-        if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE and cells[r][c] != 1:
+        if is_walkable((r, c)):
             return (r, c)
     return (row, col)
 
@@ -382,6 +468,14 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) ->
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
+
+
+def parse_end_point(value: Any) -> tuple[int, int]:
+    if isinstance(value, list) and len(value) == 2:
+        point = (int(value[0]), int(value[1]))
+        if is_reading_cell(point):
+            return point
+    return DEFAULT_SEAT
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -492,7 +586,18 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/library-map":
                 shelves = conn.execute("SELECT * FROM shelves ORDER BY id").fetchall()
-                return json_response(self, 200, {"size": GRID_SIZE, "grid": grid(), "shelves": [row_to_dict(r) for r in shelves]})
+                seats = [{"id": f"R{idx:02d}", "row": row, "col": col} for idx, (row, col) in enumerate(reading_seats(), start=1)]
+                return json_response(
+                    self,
+                    200,
+                    {
+                        "size": GRID_SIZE,
+                        "grid": grid(),
+                        "shelves": [row_to_dict(r) for r in shelves],
+                        "seats": seats,
+                        "defaultSeat": list(DEFAULT_SEAT),
+                    },
+                )
 
             if path == "/api/stats":
                 books = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
@@ -561,7 +666,8 @@ class Handler(BaseHTTPRequestHandler):
                     return json_response(self, 401, {"error": "Unauthorized"})
                 algorithm = data.get("algorithm", "astar")
                 book_ids = [int(x) for x in data.get("bookIds", [])]
-                return json_response(self, 200, plan_pickup(conn, book_ids, algorithm))
+                end = parse_end_point(data.get("end"))
+                return json_response(self, 200, plan_pickup(conn, book_ids, algorithm, end))
 
             if path == "/api/pickup/solve":
                 if not user_id:
@@ -569,7 +675,8 @@ class Handler(BaseHTTPRequestHandler):
                 algorithm = data.get("algorithm", "astar")
                 method = data.get("method", "greedy")
                 book_ids = [int(x) for x in data.get("bookIds", [])]
-                result = solve_pickup(conn, book_ids, algorithm, method)
+                end = parse_end_point(data.get("end"))
+                result = solve_pickup(conn, book_ids, algorithm, method, end)
                 if "error" in result:
                     return json_response(self, 400, result)
                 return json_response(self, 200, result)
@@ -734,7 +841,7 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
     return [item[2] for item in scored[:limit]]
 
 
-def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -> dict[str, Any]:
+def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, end: tuple[int, int] = DEFAULT_SEAT) -> dict[str, Any]:
     rows = conn.execute(
         f"""
         SELECT b.id, b.book_id, b.title, b.shelf_id, s.row, s.col
@@ -747,9 +854,9 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         row_to_dict(row) | {"pickup": list(pickup_point(row))}
         for row in rows
     ]
-    current = (0, 0)
+    current = ENTRANCE
     unvisited = targets[:]
-    full_path: list[list[int]] = [[0, 0]]
+    full_path: list[list[int]] = [[ENTRANCE[0], ENTRANCE[1]]]
     visit_order = []
     segments = []
     total_distance = 0
@@ -796,7 +903,7 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         previous_label = target["shelf_id"]
         unvisited.remove(target)
 
-    end_segment = search_path(current, (23, 23), algorithm)
+    end_segment = search_path(current, end, algorithm)
     if end_segment["distance"] is not None:
         full_path.extend(end_segment["path"][1:])
         total_distance += end_segment["distance"]
@@ -804,15 +911,15 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         total_runtime += end_segment["runtimeMs"]
         segments.append(
             {
-                "type": "exit",
+                "type": "seat",
                 "from": previous_label,
-                "to": "出口",
+                "to": "阅读区座位",
                 "distance": end_segment["distance"],
                 "expanded": end_segment["expanded"],
                 "runtimeMs": end_segment["runtimeMs"],
                 "path": end_segment["path"],
                 "instructions": movement_instructions(end_segment["path"]),
-                "summary": f"从{previous_label}前往出口，完成本次取书。",
+                "summary": f"从{previous_label}前往阅读区座位，完成本次取书。",
             }
         )
 
@@ -825,6 +932,7 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str) -
         "segments": segments,
         "visitOrder": visit_order,
         "unreachable": unvisited,
+        "end": list(end),
     }
 
 
@@ -840,20 +948,22 @@ def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[s
     return [row_to_dict(row) | {"pickup": list(pickup_point(row))} for row in rows]
 
 
-def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, method: str) -> dict[str, Any]:
+def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, method: str, end: tuple[int, int] = DEFAULT_SEAT) -> dict[str, Any]:
     method = (method or "greedy").lower()
     if method == "greedy":
-        return plan_pickup(conn, book_ids, algorithm)
+        plan = plan_pickup(conn, book_ids, algorithm, end)
+        plan["method"] = method
+        return plan
 
     targets = pickup_targets(conn, book_ids)
     if not targets:
-        return {"algorithm": algorithm, "method": method, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[0, 0]], "segments": [], "visitOrder": [], "unreachable": []}
+        return {"algorithm": algorithm, "method": method, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[ENTRANCE[0], ENTRANCE[1]]], "segments": [], "visitOrder": [], "unreachable": [], "end": list(end)}
 
     if method in {"csp", "planning"} and len(targets) > 10:
         return {"error": "CSP/Planning 目前仅支持最多 10 本书（组合空间过大），请减少选择或使用 Greedy。"}
 
     started = time.perf_counter()
-    points = compute_keypoints(targets)
+    points = compute_keypoints(targets, end)
     pair_results, pre_expanded, pre_runtime = precompute_paths(points, algorithm)
 
     if method == "csp":
@@ -863,7 +973,7 @@ def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, 
     else:
         return {"error": f"Unknown method: {method}"}
 
-    plan = plan_pickup_with_order(targets, order, algorithm, pair_results)
+    plan = plan_pickup_with_order(targets, order, algorithm, pair_results, end)
     plan["method"] = method
     plan["solverExpanded"] = solver_expanded
     plan["precomputeExpanded"] = pre_expanded
@@ -873,8 +983,8 @@ def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, 
     return plan
 
 
-def compute_keypoints(targets: list[dict[str, Any]]) -> list[tuple[int, int]]:
-    return [(0, 0), *[tuple(t["pickup"]) for t in targets], (23, 23)]
+def compute_keypoints(targets: list[dict[str, Any]], end: tuple[int, int] = DEFAULT_SEAT) -> list[tuple[int, int]]:
+    return [ENTRANCE, *[tuple(t["pickup"]) for t in targets], end]
 
 
 def precompute_paths(
@@ -1055,9 +1165,10 @@ def plan_pickup_with_order(
     order: list[int],
     algorithm: str,
     pair_results: dict[tuple[int, int], dict[str, Any]],
+    end: tuple[int, int] = DEFAULT_SEAT,
 ) -> dict[str, Any]:
     current_idx = 0
-    full_path: list[list[int]] = [[0, 0]]
+    full_path: list[list[int]] = [[ENTRANCE[0], ENTRANCE[1]]]
     visit_order: list[dict[str, Any]] = []
     segments: list[dict[str, Any]] = []
     total_distance = 0
@@ -1108,15 +1219,15 @@ def plan_pickup_with_order(
         total_runtime += float(end_seg.get("runtimeMs") or 0.0)
         segments.append(
             {
-                "type": "exit",
+                "type": "seat",
                 "from": previous_label,
-                "to": "出口",
+                "to": "阅读区座位",
                 "distance": int(end_seg["distance"]),
                 "expanded": int(end_seg.get("expanded") or 0),
                 "runtimeMs": float(end_seg.get("runtimeMs") or 0.0),
                 "path": end_seg["path"],
                 "instructions": movement_instructions(end_seg["path"]),
-                "summary": f"从{previous_label}前往出口，完成本次取书。",
+                "summary": f"从{previous_label}前往阅读区座位，完成本次取书。",
             }
         )
 
@@ -1129,6 +1240,7 @@ def plan_pickup_with_order(
         "segments": segments,
         "visitOrder": visit_order,
         "unreachable": [],
+        "end": list(end),
     }
 
 

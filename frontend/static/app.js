@@ -14,6 +14,7 @@ const state = {
   pickerMode: "",
   pickerItems: [],
   pickerTempSelected: new Set(),
+  selectedSeat: null,
 };
 
 const ROUTE_PLAYBACK_INTERVAL_MS = 140;
@@ -198,8 +199,29 @@ async function loadPickup() {
   }
   const map = await api("/api/library-map");
   state.map = map;
+  qs("#mapShelfCount").textContent = `${map.shelves.length} 个书架`;
   renderPickupSelection();
+  renderSelectedSeat();
+  renderRouteSteps();
   renderMap();
+}
+
+function renderSelectedSeat() {
+  const box = qs("#selectedSeatInfo");
+  if (!box) return;
+  if (!state.selectedSeat) {
+    box.textContent = "终点座位：无";
+    return;
+  }
+  const [row, col] = state.selectedSeat;
+  box.textContent = `终点座位：阅读区 (${row}, ${col})`;
+}
+
+function updateAlgorithmSummary() {
+  const solver = qs("#solverSelect")?.selectedOptions?.[0]?.textContent || "Greedy";
+  const strategy = qs("#algorithmSelect")?.selectedOptions?.[0]?.textContent || "A* Search";
+  const box = qs("#algorithmSummary");
+  if (box) box.textContent = `当前算法：${solver} + ${strategy}`;
 }
 
 function selectedPickupIds() {
@@ -210,30 +232,63 @@ function renderPickupSelection() {
   const box = qs("#pickupSelection");
   box.innerHTML = "";
   qs("#pickupCount").textContent = `${state.pickupSelection.length} 本`;
-  if (!state.pickupSelection.length) {
-    box.innerHTML = `<div class="profile-card">还没有选择图书。可以从“我的收藏”或“搜索想看的书”加入本次取书。</div>`;
-    qs("#selectionNote").textContent = "Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。";
-    return;
-  }
 
   state.pickupSelection.forEach((book, index) => {
     const item = document.createElement("article");
     item.className = "selected-book";
     item.innerHTML = `
       <span class="selection-index">${index + 1}</span>
-      <span>
+      <span class="selected-book-body">
         <strong>${escapeHtml(book.title)}</strong>
         <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "未分类")} · ${escapeHtml(book.shelf_id)} (${book.row}, ${book.col})</span>
       </span>
-      <button data-remove-pickup="${book.id}" aria-label="移除 ${escapeHtml(book.title)}">移除</button>
+      <button class="remove-selected-book" data-remove-pickup="${book.id}" aria-label="移除 ${escapeHtml(book.title)}" title="移除">×</button>
     `;
     box.appendChild(item);
   });
 
-  const overLimit = state.pickupSelection.length > 10;
-  qs("#selectionNote").textContent = overLimit
-    ? `已选择 ${state.pickupSelection.length} 本。Greedy 可继续使用，Planning / CSP 最多支持 10 本。`
-    : "Planning / CSP 建议一次选择不超过 10 本，Greedy 可处理更多书。";
+  const addItem = document.createElement("button");
+  addItem.className = `pickup-add-item ${state.pickupSelection.length ? "" : "empty"}`;
+  addItem.id = "addPickupBookButton";
+  addItem.type = "button";
+  addItem.innerHTML = `
+    <span class="pickup-empty-mark">+</span>
+    <span>添加想要取的书</span>
+  `;
+  box.appendChild(addItem);
+
+}
+
+function toggleAddBookMenu() {
+  const menu = qs("#addBookMenu");
+  const shouldOpen = menu.hidden;
+  menu.hidden = !shouldOpen;
+  if (shouldOpen) positionAddBookMenu();
+}
+
+function closeAddBookMenu() {
+  qs("#addBookMenu").hidden = true;
+}
+
+function openNotice(message = "需要点击绿色格子来确定最终座位。") {
+  qs("#noticeMessage").textContent = message;
+  qs("#noticeModal").hidden = false;
+}
+
+function closeNotice() {
+  qs("#noticeModal").hidden = true;
+}
+
+function positionAddBookMenu() {
+  const menu = qs("#addBookMenu");
+  const button = qs("#addPickupBookButton");
+  const panel = qs(".pickup-panel");
+  if (!menu || !button || !panel) return;
+  const buttonRect = button.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  menu.style.left = `${buttonRect.left - panelRect.left}px`;
+  menu.style.top = `${buttonRect.bottom - panelRect.top + 6}px`;
+  menu.style.width = `${Math.min(buttonRect.width, 260)}px`;
 }
 
 function resetPlannedRoute() {
@@ -307,8 +362,9 @@ async function searchPickerBooks() {
 function renderPickerList() {
   const list = qs("#pickerList");
   const selected = state.pickerTempSelected;
+  const selectedInCurrentList = state.pickerItems.filter((book) => selected.has(Number(book.id))).length;
   list.innerHTML = "";
-  qs("#pickerStatus").textContent = `${state.pickerItems.length} 本可选，已勾选 ${selected.size} 本`;
+  qs("#pickerStatus").textContent = `${state.pickerItems.length} 本可选，已勾选 ${selectedInCurrentList} 本`;
   qs("#pickerSelectAll").checked = state.pickerItems.length > 0 && state.pickerItems.every((book) => selected.has(Number(book.id)));
 
   if (!state.pickerItems.length) {
@@ -381,16 +437,23 @@ function getCurrentPlaybackPoint() {
 
 function renderMap() {
   if (!state.map) return;
+  renderMapInto(qs("#libraryGrid"));
+  const largeGrid = qs("#libraryGridLarge");
+  if (largeGrid && !qs("#mapModal").hidden) renderMapInto(largeGrid);
+}
+
+function renderMapInto(grid) {
+  if (!grid || !state.map) return;
   const visiblePath = getAnimatedPath();
   const pathSet = new Set(visiblePath.map((p) => `${p[0]},${p[1]}`));
   const currentPoint = getCurrentPlaybackPoint();
   const currentKey = currentPoint ? `${currentPoint[0]},${currentPoint[1]}` : "";
   const currentCellClass = "cell current";
+  const selectedSeatKey = state.selectedSeat ? `${state.selectedSeat[0]},${state.selectedSeat[1]}` : "";
   const targetByCell = new Map();
   state.targets.forEach((target, index) => {
     targetByCell.set(`${target.row},${target.col}`, index + 1);
   });
-  const grid = qs("#libraryGrid");
   grid.innerHTML = "";
   for (let r = 0; r < state.map.size; r++) {
     for (let c = 0; c < state.map.size; c++) {
@@ -399,42 +462,57 @@ function renderMap() {
       cell.className = "cell";
       if (value === 1) cell.classList.add("shelf");
       if (value === 2) cell.classList.add("entrance");
-      if (value === 3) cell.classList.add("exit");
+      if (value === 4) cell.classList.add("crowded");
+      if (value === 5) {
+        cell.classList.add("reading");
+        cell.dataset.seat = "true";
+      }
       if (pathSet.has(`${r},${c}`) && value !== 2 && value !== 3) cell.className = "cell path";
       if (targetByCell.has(`${r},${c}`)) {
         cell.className = "cell target";
         cell.textContent = targetByCell.get(`${r},${c}`);
+      }
+      if (`${r},${c}` === selectedSeatKey) {
+        cell.className = "cell seat";
+        cell.textContent = "S";
       }
       if (`${r},${c}` === currentKey) {
         cell.className = targetByCell.has(currentKey) ? `${cell.className} current` : currentCellClass;
         if (!targetByCell.has(currentKey)) cell.textContent = "●";
       }
       cell.title = `(${r}, ${c})`;
+      cell.dataset.row = r;
+      cell.dataset.col = c;
       grid.appendChild(cell);
     }
   }
 }
 
+function selectSeat(row, col) {
+  state.selectedSeat = [Number(row), Number(col)];
+  resetPlannedRoute();
+  renderSelectedSeat();
+  renderMap();
+}
+
+function openMapModal() {
+  qs("#mapModal").hidden = false;
+  renderMapInto(qs("#libraryGridLarge"));
+}
+
+function closeMapModal() {
+  qs("#mapModal").hidden = true;
+}
+
 function updateRouteProgress() {
   const path = getVisibleRoutePath();
-  const progress = qs("#routeProgress");
   const playButton = qs("#playRouteButton");
   const pauseButton = qs("#pauseRouteButton");
   const resetButton = qs("#resetRouteButton");
-  if (!progress || !playButton || !pauseButton || !resetButton) return;
+  if (!playButton || !pauseButton || !resetButton) return;
 
   const hasPath = path.length > 0;
   const isPlaying = Boolean(state.playbackTimer);
-  const frame = state.playbackIndex == null ? null : Math.min(state.playbackIndex, Math.max(path.length - 1, 0));
-
-  if (!hasPath) {
-    progress.textContent = "尚未生成路径";
-  } else if (frame == null) {
-    progress.textContent = `完整路径：${path.length} 格`;
-  } else {
-    const point = path[frame];
-    progress.textContent = `第 ${frame + 1} / ${path.length} 格：(${point[0]}, ${point[1]})`;
-  }
 
   playButton.disabled = !hasPath || isPlaying;
   pauseButton.disabled = !isPlaying;
@@ -486,27 +564,32 @@ function playRouteAnimation() {
 function renderRouteSteps() {
   const box = qs("#routeSteps");
   box.innerHTML = "";
-  if (!state.segments.length) return;
-
-  const heading = document.createElement("div");
-  heading.className = "section-title route-heading";
-  heading.innerHTML = `<h2>取书步骤</h2><span>点击步骤高亮该段</span>`;
-  box.appendChild(heading);
+  qs("#routeStepCount").textContent = `${state.segments.length} 步`;
+  if (!state.segments.length) {
+    box.innerHTML = `
+      <div class="route-empty">
+        <span class="route-empty-mark">→</span>
+        <span><strong>尚未生成路径</strong><br>生成路径后会显示取书步骤。</span>
+      </div>
+    `;
+    return;
+  }
 
   state.segments.forEach((segment, index) => {
     const item = document.createElement("button");
     item.className = `route-step ${state.activeSegment === index ? "active" : ""}`;
     item.dataset.segment = index;
     const directions = segment.instructions?.length ? segment.instructions.join("，") : "无需移动";
-    const title = segment.type === "exit"
-      ? `步骤 ${index + 1} · 前往出口`
-      : `步骤 ${index + 1} · 取 ${escapeHtml(segment.shelfId)}`;
+    const title = segment.type === "seat"
+      ? "前往阅读区"
+      : `前往 ${escapeHtml(segment.shelfId)}`;
     const bookLine = segment.type === "book"
       ? `<strong>${escapeHtml(segment.bookTitle)}</strong><br><span>${escapeHtml(segment.pickupSide)}取书</span>`
-      : `<strong>到达出口</strong><br><span>完成本次取书</span>`;
+      : `<strong>到达阅读区座位</strong><br><span>完成本次取书</span>`;
     item.innerHTML = `
-      <div class="route-step-title">${title}</div>
+      <span class="route-step-index">${index + 1}</span>
       <div class="route-step-body">
+        <span class="route-step-title">${title}</span>
         ${bookLine}
         <span>距离：${segment.distance} 步</span>
         <span>方向：${escapeHtml(directions)}</span>
@@ -522,6 +605,10 @@ async function planPath() {
     qs("#pathMetrics").textContent = "请至少选择一本想取的书。";
     return;
   }
+  if (!state.selectedSeat) {
+    openNotice("需要点击绿色格子来确定最终座位。");
+    return;
+  }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "greedy";
   pauseRouteAnimation();
@@ -529,7 +616,7 @@ async function planPath() {
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
-      body: JSON.stringify({ bookIds: ids, algorithm, method }),
+      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat }),
     });
   } catch (err) {
     state.path = [];
@@ -559,8 +646,9 @@ async function planPath() {
     <br>
     <strong>路线摘要</strong><br>
     共需取书：${result.visitOrder.length} 本<br>
-    总路程：${result.distance} 步<br>
-    推荐顺序：${result.visitOrder.map((b) => escapeHtml(b.shelf_id)).join(" → ")} → 出口
+    总代价：${result.distance}<br>
+    终点座位：(${result.end?.[0] ?? state.selectedSeat[0]}, ${result.end?.[1] ?? state.selectedSeat[1]})<br>
+    推荐顺序：${result.visitOrder.map((b) => escapeHtml(b.shelf_id)).join(" → ")} → 阅读区
   `;
   renderRouteSteps();
   renderMap();
@@ -678,9 +766,21 @@ function bindEvents() {
     if (toggle) toggleFavorite(toggle.dataset.favToggle, toggle.dataset.favorite === "true");
     if (unfav) unfavoriteBook(unfav.dataset.unfav);
     if (removePickup) removePickupBook(removePickup.dataset.removePickup);
+    if (event.target.closest("#addPickupBookButton")) {
+      event.stopPropagation();
+      toggleAddBookMenu();
+      return;
+    }
+    if (!event.target.closest("#addBookMenu")) closeAddBookMenu();
   });
-  qs("#openFavoritesButton").addEventListener("click", openFavoritesPicker);
-  qs("#openSearchPickerButton").addEventListener("click", openSearchPicker);
+  qs("#openFavoritesButton").addEventListener("click", () => {
+    closeAddBookMenu();
+    openFavoritesPicker();
+  });
+  qs("#openSearchPickerButton").addEventListener("click", () => {
+    closeAddBookMenu();
+    openSearchPicker();
+  });
   qs("#clearPickupButton").addEventListener("click", clearPickupSelection);
   qs("#closeBookPicker").addEventListener("click", closePicker);
   qs("#cancelBookPicker").addEventListener("click", closePicker);
@@ -701,6 +801,29 @@ function bindEvents() {
   qs("#playRouteButton").addEventListener("click", playRouteAnimation);
   qs("#pauseRouteButton").addEventListener("click", pauseRouteAnimation);
   qs("#resetRouteButton").addEventListener("click", resetRouteAnimation);
+  qs("#solverSelect").addEventListener("change", updateAlgorithmSummary);
+  qs("#algorithmSelect").addEventListener("change", updateAlgorithmSummary);
+  qs("#libraryGrid").addEventListener("click", (event) => {
+    const cell = event.target.closest("[data-seat='true']");
+    if (cell) selectSeat(cell.dataset.row, cell.dataset.col);
+  });
+  qs("#openMapModal").addEventListener("click", openMapModal);
+  qs("#closeMapModal").addEventListener("click", closeMapModal);
+  qs("#mapModal").addEventListener("click", (event) => {
+    if (event.target.id === "mapModal") closeMapModal();
+  });
+  qs("#closeNoticeModal").addEventListener("click", closeNotice);
+  qs("#noticeModal").addEventListener("click", (event) => {
+    if (event.target.id === "noticeModal") closeNotice();
+  });
+  qs("#libraryGridLarge").addEventListener("click", (event) => {
+    const cell = event.target.closest("[data-seat='true']");
+    if (cell) selectSeat(cell.dataset.row, cell.dataset.col);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !qs("#mapModal").hidden) closeMapModal();
+    if (event.key === "Escape" && !qs("#noticeModal").hidden) closeNotice();
+  });
   qs("#routeSteps").addEventListener("click", (event) => {
     const step = event.target.closest("[data-segment]");
     if (!step) return;
@@ -746,6 +869,7 @@ function switchAuth(register) {
 
 async function boot() {
   bindEvents();
+  updateAlgorithmSummary();
   await loadStats();
   await loadMe();
   await searchBooks({ record: false });
