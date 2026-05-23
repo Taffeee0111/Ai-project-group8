@@ -402,14 +402,16 @@ section {
   align-self: start;
   max-height: calc(100vh - 52px);
   display: grid;
-  grid-template-rows: auto auto minmax(0, auto);
+  grid-template-rows: auto auto auto minmax(0, auto);
   overflow: hidden;
 }
 
 .map-title-actions {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  margin: -2px 0 4px;
 }
 
 .map-expand-button {
@@ -815,11 +817,25 @@ section {
 
 .legend {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px 12px;
   color: var(--muted);
   font-size: 13px;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+#mapShelfCount {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .legend span {
@@ -837,31 +853,22 @@ section {
 }
 
 .route-line-sample {
-  position: relative;
   width: 24px;
   height: 14px;
   flex: 0 0 24px;
+  display: block;
+  overflow: visible;
 }
 
-.route-line-sample::before {
-  content: "";
-  position: absolute;
-  left: 1px;
-  right: 5px;
-  top: 6px;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--primary);
+.route-line-sample path:first-child {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 3;
+  stroke-linecap: round;
 }
 
-.route-line-sample::after {
-  content: "";
-  position: absolute;
-  right: 2px;
-  top: 4px;
-  border-left: 5px solid var(--primary);
-  border-top: 3px solid transparent;
-  border-bottom: 3px solid transparent;
+.route-line-sample path:last-child {
+  fill: var(--primary);
 }
 
 .library-grid {

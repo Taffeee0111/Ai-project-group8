@@ -120,19 +120,27 @@
             <section class="map-panel">
               <div class="section-title">
                 <h2>30 × 30 图书馆地图</h2>
-                <div class="map-title-actions">
-                  <span id="mapShelfCount">书架布局</span>
-                  <button class="map-expand-button" id="openMapModal" title="放大地图" aria-label="放大地图">⛶</button>
-                </div>
               </div>
               <div class="legend">
-                <span><i class="cell entrance"></i>入口</span>
-                <span><i class="cell reading"></i>阅读区</span>
-                <span><i class="cell crowded"></i>拥堵区</span>
-                <span><i class="cell shelf"></i>书架</span>
-                <span><i class="cell target"></i>目标</span>
-                <span><i class="cell seat"></i>座位</span>
-                <span><i class="route-line-sample"></i>路线</span>
+                <div class="legend-items">
+                  <span><i class="cell entrance"></i>入口</span>
+                  <span><i class="cell reading"></i>阅读区</span>
+                  <span><i class="cell crowded"></i>拥堵区</span>
+                  <span><i class="cell shelf"></i>书架</span>
+                  <span><i class="cell target"></i>目标</span>
+                  <span><i class="cell seat"></i>座位</span>
+                  <span>
+                    <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
+                      <path d="M2 7 H22" />
+                      <path d="M18 3 L26 7 L18 11 Z" />
+                    </svg>
+                    路线
+                  </span>
+                </div>
+                <span id="mapShelfCount">书架布局</span>
+              </div>
+              <div class="map-title-actions">
+                <button class="map-expand-button" id="openMapModal" title="放大地图" aria-label="放大地图">⛶</button>
               </div>
               <div id="libraryGrid" class="library-grid"></div>
             </section>
@@ -220,7 +228,13 @@
           <span><i class="cell shelf"></i>书架</span>
           <span><i class="cell target"></i>目标</span>
           <span><i class="cell seat"></i>座位</span>
-          <span><i class="route-line-sample"></i>路线</span>
+          <span>
+            <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
+              <path d="M2 7 H22" />
+              <path d="M18 3 L26 7 L18 11 Z" />
+            </svg>
+            路线
+          </span>
         </div>
         <div id="libraryGridLarge" class="library-grid library-grid-large"></div>
       </section>
