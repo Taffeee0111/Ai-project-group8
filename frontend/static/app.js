@@ -8,7 +8,9 @@ const state = {
   segments: [],
   activeSegment: null,
   playbackTimer: null,
-  playbackIndex: null,
+  playbackProgress: null,
+  playbackStartedAt: null,
+  playbackStartProgress: 0,
   searchKeyword: "",
   pickupSelection: [],
   pickerMode: "",
@@ -17,12 +19,14 @@ const state = {
   selectedSeat: null,
 };
 
-const ROUTE_PLAYBACK_INTERVAL_MS = 140;
+const ROUTE_PLAYBACK_STEP_MS = 90;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ROUTE_COLORS = ["#2364aa", "#e4572e", "#0f8b8d", "#8a4fff", "#b7791f", "#00875a", "#c026d3", "#475569"];
 
 const titles = {
   login: ["登录 / 注册", "进入系统后可保存搜索历史、收藏和取书计划。"],
   search: ["图书搜索", "搜索 1500 本馆藏图书，收藏后可生成取书路线。"],
-  pickup: ["取书路径规划", "在 24 × 24 棋盘地图上比较 BFS、UCS 和 A* 搜索策略。"],
+  pickup: ["取书路径规划", "在 30 × 30 棋盘地图上比较 BFS、UCS 和 A* 搜索策略。"],
   profile: ["个人中心", "查看用户名、搜索历史和收藏图书。"],
 };
 
@@ -297,7 +301,9 @@ function resetPlannedRoute() {
   state.targets = [];
   state.segments = [];
   state.activeSegment = null;
-  state.playbackIndex = null;
+  state.playbackProgress = null;
+  state.playbackStartedAt = null;
+  state.playbackStartProgress = 0;
   renderRouteSteps();
   renderMap();
   updateRouteProgress();
@@ -355,7 +361,7 @@ async function openSearchPicker() {
 
 async function searchPickerBooks() {
   const keyword = qs("#pickerSearchInput").value.trim();
-  state.pickerItems = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}&record=0`);
+  state.pickerItems = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}&record=1`);
   renderPickerList();
 }
 
@@ -423,16 +429,193 @@ function getVisibleRoutePath() {
     : state.segments[state.activeSegment]?.path || [];
 }
 
-function getAnimatedPath() {
+function getPlaybackLimit() {
   const path = getVisibleRoutePath();
-  if (!path.length || state.playbackIndex == null) return path;
-  return path.slice(0, Math.min(state.playbackIndex, path.length - 1) + 1);
+  return Math.max(0, path.length - 1);
 }
 
-function getCurrentPlaybackPoint() {
+function getVisibleProgress() {
   const path = getVisibleRoutePath();
-  if (!path.length || state.playbackIndex == null) return null;
-  return path[Math.min(state.playbackIndex, path.length - 1)];
+  if (!path.length || state.playbackProgress == null) return path.length ? path.length - 1 : 0;
+  return Math.min(state.playbackProgress, getPlaybackLimit());
+}
+
+function routePointKey(point) {
+  return `${point[0]},${point[1]}`;
+}
+
+function cellCenter(grid, point) {
+  const cell = grid.querySelector(`[data-row="${point[0]}"][data-col="${point[1]}"]`);
+  if (!cell) return null;
+  const cellRect = cell.getBoundingClientRect();
+  const gridRect = grid.getBoundingClientRect();
+  return {
+    x: cellRect.left - gridRect.left + cellRect.width / 2,
+    y: cellRect.top - gridRect.top + cellRect.height / 2,
+  };
+}
+
+function routeVisualPoints(grid, path, segmentIndex) {
+  const usage = sharedRouteEdgeUsage();
+  const points = [];
+  const runs = routeRuns(path).map((run) => {
+    const startCenter = cellCenter(grid, path[run.start]);
+    const endCenter = cellCenter(grid, path[run.end]);
+    const offset = routeRunOffset(path, run, segmentIndex, usage);
+    return {
+      run,
+      startCenter,
+      endCenter,
+      offset,
+      start: startCenter ? { x: startCenter.x + offset.x, y: startCenter.y + offset.y } : null,
+      end: endCenter ? { x: endCenter.x + offset.x, y: endCenter.y + offset.y } : null,
+    };
+  }).filter((item) => item.startCenter && item.endCenter && item.start && item.end);
+
+  runs.forEach((item, runIndex) => {
+    const next = runs[runIndex + 1];
+
+    if (!points.length) {
+      points.push(item.startCenter);
+      if (!sameVisualPoint(item.startCenter, item.start)) points.push(item.start);
+    }
+
+    const endPoint = next ? routeCornerJoin(item, next) : item.end;
+    if (!sameVisualPoint(points[points.length - 1], endPoint)) {
+      points.push(endPoint);
+    }
+  });
+
+  return points;
+}
+
+function routeCornerJoin(previous, current) {
+  const center = previous.endCenter;
+  return {
+    x: center.x + routeAxisOffset(previous, current, "x"),
+    y: center.y + routeAxisOffset(previous, current, "y"),
+  };
+}
+
+function routeAxisOffset(previous, current, axis) {
+  const candidates = [previous, current];
+  const matching = candidates.find((item) => {
+    const vertical = Math.abs(item.run.direction[0]) > 0;
+    return axis === "x" ? vertical : !vertical;
+  });
+  return matching ? matching.offset[axis] : 0;
+}
+
+function routeRuns(path) {
+  if (path.length < 2) return [];
+  const runs = [];
+  let start = 0;
+  let direction = routeDirection(path[0], path[1]);
+
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const nextDirection = routeDirection(path[index], path[index + 1]);
+    if (nextDirection[0] !== direction[0] || nextDirection[1] !== direction[1]) {
+      runs.push({ start, end: index, direction });
+      start = index;
+      direction = nextDirection;
+    }
+  }
+  runs.push({ start, end: path.length - 1, direction });
+  return runs;
+}
+
+function routeDirection(from, to) {
+  return [Math.sign(to[0] - from[0]), Math.sign(to[1] - from[1])];
+}
+
+function canonicalEdgeKey(a, b) {
+  return [routePointKey(a), routePointKey(b)].sort().join("|");
+}
+
+function sharedRouteEdgeUsage() {
+  const usage = new Map();
+  state.segments.forEach((segment, segmentIndex) => {
+    (segment.path || []).slice(1).forEach((point, index) => {
+      const previous = segment.path[index];
+      const key = canonicalEdgeKey(previous, point);
+      if (!usage.has(key)) usage.set(key, new Set());
+      usage.get(key).add(segmentIndex);
+    });
+  });
+  return usage;
+}
+
+function sameVisualPoint(left, right) {
+  return Math.abs(left.x - right.x) < 0.1 && Math.abs(left.y - right.y) < 0.1;
+}
+
+function routeRunOffset(path, run, segmentIndex, usage) {
+  const peerSet = new Set([segmentIndex]);
+  for (let index = run.start; index < run.end; index += 1) {
+    const peers = usage.get(canonicalEdgeKey(path[index], path[index + 1])) || [];
+    peers.forEach((peer) => peerSet.add(peer));
+  }
+  const peers = [...peerSet].sort((a, b) => a - b);
+  if (peers.length <= 1) return { x: 0, y: 0 };
+
+  const order = peers.indexOf(segmentIndex);
+  const centered = order - (peers.length - 1) / 2;
+  const amount = centered * 4;
+  const direction = run.direction;
+
+  if (Math.abs(direction[1]) > Math.abs(direction[0])) return { x: 0, y: amount };
+  return { x: amount, y: 0 };
+}
+
+function segmentStepRanges() {
+  let cursor = 0;
+  return state.segments.map((segment) => {
+    const stepCount = Math.max(0, (segment.path || []).length - 1);
+    const range = { start: cursor, end: cursor + stepCount };
+    cursor += stepCount;
+    return range;
+  });
+}
+
+function progressForSegment(index) {
+  const segment = state.segments[index];
+  const segmentLimit = Math.max(0, (segment?.path || []).length - 1);
+  if (state.playbackProgress == null) return segmentLimit;
+  if (state.activeSegment != null) {
+    return state.activeSegment === index ? Math.min(state.playbackProgress, segmentLimit) : segmentLimit;
+  }
+
+  const range = segmentStepRanges()[index];
+  if (!range) return segmentLimit;
+  if (state.playbackProgress <= range.start) return 0;
+  if (state.playbackProgress >= range.end) return segmentLimit;
+  return state.playbackProgress - range.start;
+}
+
+function interpolatedRoutePoint(points, progress, stepLimit) {
+  if (!points.length) return null;
+  if (points.length === 1 || stepLimit <= 0) return points[0];
+
+  const ratio = Math.max(0, Math.min(1, progress / stepLimit));
+  const lengths = [];
+  let totalLength = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const length = Math.hypot(points[index + 1].x - points[index].x, points[index + 1].y - points[index].y);
+    lengths.push(length);
+    totalLength += length;
+  }
+  let remaining = totalLength * ratio;
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (remaining <= lengths[index]) {
+      const localRatio = lengths[index] ? remaining / lengths[index] : 0;
+      return {
+        x: points[index].x + (points[index + 1].x - points[index].x) * localRatio,
+        y: points[index].y + (points[index + 1].y - points[index].y) * localRatio,
+      };
+    }
+    remaining -= lengths[index];
+  }
+  return points[points.length - 1];
 }
 
 function renderMap() {
@@ -442,13 +625,17 @@ function renderMap() {
   if (largeGrid && !qs("#mapModal").hidden) renderMapInto(largeGrid);
 }
 
+function renderRouteOverlays() {
+  if (!state.map) return;
+  [qs("#libraryGrid"), !qs("#mapModal").hidden ? qs("#libraryGridLarge") : null].forEach((grid) => {
+    if (!grid) return;
+    grid.querySelector(".route-lines")?.remove();
+    renderRouteLines(grid);
+  });
+}
+
 function renderMapInto(grid) {
   if (!grid || !state.map) return;
-  const visiblePath = getAnimatedPath();
-  const pathSet = new Set(visiblePath.map((p) => `${p[0]},${p[1]}`));
-  const currentPoint = getCurrentPlaybackPoint();
-  const currentKey = currentPoint ? `${currentPoint[0]},${currentPoint[1]}` : "";
-  const currentCellClass = "cell current";
   const selectedSeatKey = state.selectedSeat ? `${state.selectedSeat[0]},${state.selectedSeat[1]}` : "";
   const targetByCell = new Map();
   state.targets.forEach((target, index) => {
@@ -467,7 +654,6 @@ function renderMapInto(grid) {
         cell.classList.add("reading");
         cell.dataset.seat = "true";
       }
-      if (pathSet.has(`${r},${c}`) && value !== 2 && value !== 3) cell.className = "cell path";
       if (targetByCell.has(`${r},${c}`)) {
         cell.className = "cell target";
         cell.textContent = targetByCell.get(`${r},${c}`);
@@ -476,16 +662,92 @@ function renderMapInto(grid) {
         cell.className = "cell seat";
         cell.textContent = "S";
       }
-      if (`${r},${c}` === currentKey) {
-        cell.className = targetByCell.has(currentKey) ? `${cell.className} current` : currentCellClass;
-        if (!targetByCell.has(currentKey)) cell.textContent = "●";
-      }
       cell.title = `(${r}, ${c})`;
       cell.dataset.row = r;
       cell.dataset.col = c;
       grid.appendChild(cell);
     }
   }
+  renderRouteLines(grid);
+}
+
+function renderRouteLines(grid) {
+  if (!state.segments.length) return;
+  const rect = grid.getBoundingClientRect();
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("route-lines");
+  svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  svg.setAttribute("aria-hidden", "true");
+  grid.appendChild(svg);
+
+  state.segments.forEach((segment, index) => {
+    if (state.activeSegment != null && state.activeSegment !== index) {
+      renderRouteSegment(svg, grid, segment, index, true);
+      return;
+    }
+    renderRouteSegment(svg, grid, segment, index, false);
+  });
+
+}
+
+function renderRouteSegment(svg, grid, segment, index, muted) {
+  const path = segment.path || [];
+  if (path.length < 2) return;
+  const points = routeVisualPoints(grid, path, index);
+  if (points.length < 2) return;
+
+  const colorIndex = index % ROUTE_COLORS.length;
+  const line = document.createElementNS(SVG_NS, "polyline");
+  line.classList.add("route-line");
+  if (muted) line.classList.add("muted");
+  line.setAttribute("points", points.map((point) => `${point.x},${point.y}`).join(" "));
+  line.setAttribute("stroke", ROUTE_COLORS[colorIndex]);
+
+  const progress = progressForSegment(index);
+  svg.appendChild(line);
+
+  const totalLength = Math.max(1, line.getTotalLength ? line.getTotalLength() : path.length);
+  const progressLength = totalLength * Math.min(1, progress / Math.max(1, path.length - 1));
+  line.style.strokeDasharray = `${totalLength}`;
+  line.style.strokeDashoffset = `${Math.max(0, totalLength - progressLength)}`;
+
+  if (segment.type !== "seat") {
+    if (progress >= path.length - 1) {
+      renderRouteArrow(svg, points, colorIndex, muted);
+    } else if (!muted && progress > 0) {
+      renderMovingRouteArrow(svg, grid, path, index, colorIndex, progress);
+    }
+  }
+}
+
+function renderRouteArrow(svg, points, colorIndex, muted) {
+  const tip = points[points.length - 1];
+  const previous = points[points.length - 2];
+  if (!tip || !previous) return;
+
+  const angle = Math.atan2(tip.y - previous.y, tip.x - previous.x) * 180 / Math.PI;
+  const arrow = document.createElementNS(SVG_NS, "polygon");
+  arrow.classList.add("route-arrow");
+  if (muted) arrow.classList.add("muted");
+  arrow.setAttribute("points", "0,-5 10,0 0,5");
+  arrow.setAttribute("fill", ROUTE_COLORS[colorIndex]);
+  arrow.setAttribute("transform", `translate(${tip.x} ${tip.y}) rotate(${angle})`);
+  svg.appendChild(arrow);
+}
+
+function renderMovingRouteArrow(svg, grid, path, segmentIndex, colorIndex, progress) {
+  const points = routeVisualPoints(grid, path, segmentIndex);
+  const position = interpolatedRoutePoint(points, progress, Math.max(1, path.length - 1));
+  const previous = interpolatedRoutePoint(points, Math.max(0, progress - 0.12), Math.max(1, path.length - 1));
+  if (!position || !previous) return;
+
+  const angle = Math.atan2(position.y - previous.y, position.x - previous.x) * 180 / Math.PI;
+  const arrow = document.createElementNS(SVG_NS, "polygon");
+  arrow.classList.add("route-arrow", "moving");
+  arrow.setAttribute("points", "0,-5 10,0 0,5");
+  arrow.setAttribute("fill", ROUTE_COLORS[colorIndex]);
+  arrow.setAttribute("transform", `translate(${position.x} ${position.y}) rotate(${angle})`);
+  svg.appendChild(arrow);
 }
 
 function selectSeat(row, col) {
@@ -521,43 +783,54 @@ function updateRouteProgress() {
 
 function pauseRouteAnimation() {
   if (state.playbackTimer) {
-    clearInterval(state.playbackTimer);
+    cancelAnimationFrame(state.playbackTimer);
     state.playbackTimer = null;
   }
+  state.playbackStartedAt = null;
+  state.playbackStartProgress = state.playbackProgress ?? 0;
   updateRouteProgress();
 }
 
 function resetRouteAnimation() {
   pauseRouteAnimation();
-  state.playbackIndex = null;
+  state.playbackProgress = null;
+  state.playbackStartedAt = null;
+  state.playbackStartProgress = 0;
   renderMap();
   updateRouteProgress();
 }
 
-function advanceRouteAnimation() {
+function advanceRouteAnimation(timestamp) {
   const path = getVisibleRoutePath();
   if (!path.length) {
     resetRouteAnimation();
     return;
   }
-  if (state.playbackIndex == null) state.playbackIndex = 0;
-  if (state.playbackIndex >= path.length - 1) {
+  if (state.playbackStartedAt == null) state.playbackStartedAt = timestamp;
+  const elapsed = timestamp - state.playbackStartedAt;
+  state.playbackProgress = Math.min(
+    getPlaybackLimit(),
+    state.playbackStartProgress + elapsed / ROUTE_PLAYBACK_STEP_MS,
+  );
+  renderRouteOverlays();
+  if (state.playbackProgress >= getPlaybackLimit()) {
     pauseRouteAnimation();
     return;
   }
-  state.playbackIndex += 1;
-  renderMap();
+  state.playbackTimer = requestAnimationFrame(advanceRouteAnimation);
   updateRouteProgress();
 }
 
 function playRouteAnimation() {
   const path = getVisibleRoutePath();
   if (!path.length || state.playbackTimer) return;
-  if (state.playbackIndex == null || state.playbackIndex >= path.length - 1) {
-    state.playbackIndex = 0;
+  if (state.playbackProgress == null || state.playbackProgress >= getPlaybackLimit()) {
+    state.playbackProgress = 0;
   }
-  renderMap();
-  state.playbackTimer = setInterval(advanceRouteAnimation, ROUTE_PLAYBACK_INTERVAL_MS);
+  state.playbackStartProgress = state.playbackProgress;
+  state.playbackStartedAt = null;
+  renderRouteOverlays();
+  state.playbackTimer = requestAnimationFrame(advanceRouteAnimation);
   updateRouteProgress();
 }
 
@@ -623,7 +896,9 @@ async function planPath() {
     state.targets = [];
     state.segments = [];
     state.activeSegment = null;
-    state.playbackIndex = null;
+    state.playbackProgress = null;
+    state.playbackStartedAt = null;
+    state.playbackStartProgress = 0;
     qs("#pathMetrics").textContent = err.message;
     renderRouteSteps();
     renderMap();
@@ -634,7 +909,9 @@ async function planPath() {
   state.targets = result.visitOrder || [];
   state.segments = result.segments || [];
   state.activeSegment = null;
-  state.playbackIndex = null;
+  state.playbackProgress = null;
+  state.playbackStartedAt = null;
+  state.playbackStartProgress = 0;
   qs("#pathMetrics").innerHTML = `
     <strong>算法指标</strong><br>
     求解方式：${escapeHtml(String(result.method || method).toUpperCase())}<br>
@@ -830,7 +1107,9 @@ function bindEvents() {
     const index = Number(step.dataset.segment);
     pauseRouteAnimation();
     state.activeSegment = state.activeSegment === index ? null : index;
-    state.playbackIndex = null;
+    state.playbackProgress = null;
+    state.playbackStartedAt = null;
+    state.playbackStartProgress = 0;
     renderRouteSteps();
     renderMap();
     updateRouteProgress();

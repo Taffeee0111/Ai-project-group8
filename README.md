@@ -2,9 +2,12 @@
 
 这是一个面向 `DI22001 - Algorithms and Artificial Intelligence AI Project` 的图书馆借阅网站原型。系统包含用户登录、图书搜索、个性化推荐、收藏管理、个人中心，以及以算法展示为核心的馆内多目标取书路径规划。
 
+本文档以当前代码为准。当前实现是 Python 标准库后端 + SQLite + 静态前端，不依赖 FastAPI、React、Vue 或额外前端构建工具。
+
 ## 功能
 
 - 注册和登录。
+- 登录后可修改密码。
 - 搜索 `book_collection_filled_1500.docx` 中的 1500 本图书。
 - 根据搜索历史和收藏记录生成推荐，推荐系统使用 TF-IDF 向量化和 cosine similarity。
 - 收藏图书并在个人中心查看。
@@ -25,7 +28,15 @@ backend/data/book_collection_filled_1500.docx
 
 如果文件存在，会自动导入 1500 本图书。如果文件不存在，会使用一组演示数据，方便系统仍然可以运行。
 
-当前地图根据前端设计图生成 `248` 个书架格。1500 本图书会映射到这些实际书架上，不再强行假设 300 个书架或每个书架固定 5 本书。
+当前地图根据代码中的 `SHELF_GROUPS` 生成 `248` 个书架格。1500 本图书会循环映射到这些实际书架上，不再强行假设 300 个书架或每个书架固定 5 本书。
+
+数据库文件位于：
+
+```text
+backend/data/library.db
+```
+
+如果数据库中已经存在图书，启动时会保留图书记录，并按当前书架布局刷新图书对应的 `shelf_id` 和 `shelf_slot`。
 
 ## 启动
 
@@ -59,6 +70,7 @@ password: demo123
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `GET /api/auth/me`
+- `POST /api/users/me/password`
 - `GET /api/books/search?keyword=...`
 - `GET /api/books/recommendations?limit=10`
 - `POST /api/books/{id}/favorite`
@@ -70,6 +82,8 @@ password: demo123
 - `POST /api/pickup/plan`
 - `POST /api/pickup/solve`
 - `GET /api/stats`
+
+当前代码没有实现 `/api/auth/logout`、`GET /api/books/{id}`、`POST /api/search-history` 或单独的 `GET /api/users/me`；个人信息通过 `GET /api/auth/me` 获取。
 
 `POST /api/pickup/solve` 支持传入：
 
@@ -88,7 +102,7 @@ password: demo123
 
 ```text
 backend/
-  server.py              # HTTP API、数据库、推荐、地图和路径算法
+  server.py              # HTTP API、SQLite 初始化、推荐、地图和路径算法
   data/
     book_collection_filled_1500.docx
     library.db

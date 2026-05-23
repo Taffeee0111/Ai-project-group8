@@ -836,7 +836,36 @@ section {
   flex: 0 0 14px;
 }
 
+.route-line-sample {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  flex: 0 0 24px;
+}
+
+.route-line-sample::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  right: 5px;
+  top: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.route-line-sample::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 4px;
+  border-left: 5px solid var(--primary);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+
 .library-grid {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(30, minmax(0, 1fr));
   width: min(100%, calc(100vh - 178px));
@@ -851,6 +880,8 @@ section {
 }
 
 .cell {
+  position: relative;
+  z-index: 1;
   aspect-ratio: 1;
   display: block;
   border-radius: 3px;
@@ -896,10 +927,7 @@ section {
   place-items: center;
   outline: 3px solid #854d0e;
   outline-offset: -2px;
-}
-
-.cell.path {
-  background: var(--path);
+  z-index: 4;
 }
 
 .cell.target {
@@ -907,6 +935,7 @@ section {
   color: #fff;
   display: grid;
   place-items: center;
+  z-index: 4;
 }
 
 .cell.current {
@@ -916,6 +945,40 @@ section {
   place-items: center;
   outline: 3px solid #083344;
   outline-offset: -2px;
+}
+
+.route-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.route-line {
+  fill: none;
+  stroke-width: clamp(3px, 0.45vw, 5px);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.28));
+}
+
+.route-line.muted {
+  opacity: 0.2;
+}
+
+.route-arrow {
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.28));
+}
+
+.route-arrow.muted {
+  opacity: 0.2;
+}
+
+.route-arrow.moving {
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.4));
 }
 
 .metrics {
