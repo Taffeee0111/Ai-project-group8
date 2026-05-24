@@ -77,9 +77,10 @@
             </section>
             <section>
               <div class="section-title">
-                <h2>智能推荐</h2>
-                <span>Top 10</span>
+                <h2>ML 推荐分析</h2>
+                <span>个性化推荐</span>
               </div>
+              <div class="ml-profile" id="mlProfile"></div>
               <div class="book-list compact" id="recommendations"></div>
             </section>
           </div>
@@ -91,16 +92,17 @@
               <div class="section-title route-control-title">
                 <h2>路线控制</h2>
               </div>
-              <button class="primary wide" id="planButton">生成路径</button>
               <div class="route-controls" id="routePlaybackControls">
-                <button id="playRouteButton" disabled>播放</button>
-                <button id="pauseRouteButton" disabled>暂停</button>
-                <button id="resetRouteButton" disabled>重置</button>
+                <button class="primary" id="planButton">生成路径</button>
+                <button class="play-toggle-button" id="playRouteButton" disabled title="播放 / 暂停" aria-label="播放 / 暂停">
+                  ▶
+                </button>
               </div>
               <div class="section-title">
                 <h2>本次取书</h2>
                 <div class="pickup-title-actions">
                   <span id="pickupCount">0 本</span>
+                  <button class="add-pickup-button" id="addPickupBookButton" title="添加想取的书" aria-label="添加想取的书">+</button>
                   <button class="clear-pickup-button" id="clearPickupButton" title="清空本次取书" aria-label="清空本次取书">🗑</button>
                 </div>
               </div>
@@ -161,15 +163,16 @@
                     </button>
                   </div>
                   <select id="algorithmSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
+                    <option value="" selected>请选择两点路径算法</option>
                     <option value="bfs">BFS</option>
                     <option value="ucs">Uniform Cost Search</option>
-                    <option value="astar_manhattan" selected>A* 曼哈顿</option>
+                    <option value="astar_manhattan">A* 曼哈顿</option>
                     <option value="astar_euclidean">A* 欧几里得</option>
                   </select>
                   <div class="algorithm-options" data-algorithm-group="algorithmSelect">
                     <button type="button" class="algorithm-option" data-value="bfs"><span></span>BFS</button>
                     <button type="button" class="algorithm-option" data-value="ucs"><span></span>Uniform Cost Search</button>
-                    <button type="button" class="algorithm-option active" data-value="astar_manhattan"><span></span>A* 曼哈顿</button>
+                    <button type="button" class="algorithm-option" data-value="astar_manhattan"><span></span>A* 曼哈顿</button>
                     <button type="button" class="algorithm-option" data-value="astar_euclidean"><span></span>A* 欧几里得</button>
                   </div>
                 </div>
@@ -182,13 +185,14 @@
                     </button>
                   </div>
                   <select id="solverSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
+                    <option value="" selected>请选择整体取书算法</option>
                     <option value="greedy">贪心最近邻（Greedy）</option>
                     <option value="greedy_2opt">贪心 + 2-opt 优化</option>
                     <option value="state_astar">状态空间 A* 搜索</option>
                     <option value="branch_bound">分支限界搜索</option>
                   </select>
                   <div class="algorithm-options" data-algorithm-group="solverSelect">
-                    <button type="button" class="algorithm-option active" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
+                    <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
                     <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
                     <button type="button" class="algorithm-option" data-value="state_astar"><span></span>状态空间 A* 搜索</button>
                     <button type="button" class="algorithm-option" data-value="branch_bound"><span></span>分支限界搜索</button>
@@ -201,7 +205,6 @@
                 </div>
                 <div class="metrics analysis-empty" id="pathMetrics">
                   <strong>等待生成路径</strong>
-                  <span>选择图书和座位后，点击左侧“生成路径”查看算法指标。</span>
                 </div>
                 <div class="compare-box">
                   <button class="primary wide" id="openCompareModal">多算法比较</button>

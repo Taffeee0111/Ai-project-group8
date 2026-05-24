@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import hmac
 import json
 import math
 import os
 import re
-import secrets
 import sqlite3
 import time
 import urllib.parse
@@ -25,6 +25,7 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend" / "static"
 BOOK_DOCX = DATA_DIR / "book_collection_filled_1500.docx"
 
 TOKENS: dict[str, int] = {}
+AUTH_SECRET = "algorithm-ai-library-auth"
 GRID_SIZE = 30
 ENTRANCE = (0, 0)
 CELL_EMPTY = 0
@@ -64,6 +65,30 @@ def now() -> str:
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def auth_signature(user_id: int) -> str:
+    payload = str(user_id).encode("utf-8")
+    return hmac.new(AUTH_SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def create_auth_token(user_id: int) -> str:
+    return f"user-{user_id}.{auth_signature(user_id)}"
+
+
+def parse_auth_token(token: str) -> int | None:
+    if token in TOKENS:
+        return TOKENS[token]
+    if not token.startswith("user-") or "." not in token:
+        return None
+    user_part, signature = token.split(".", 1)
+    try:
+        user_id = int(user_part.removeprefix("user-"))
+    except ValueError:
+        return None
+    if hmac.compare_digest(signature, auth_signature(user_id)):
+        return user_id
+    return None
 
 
 def parse_docx_table(path: Path) -> list[dict[str, str]]:
@@ -298,7 +323,7 @@ def mark_favorites(conn: sqlite3.Connection, rows: list[sqlite3.Row], user_id: i
 def get_user(handler: BaseHTTPRequestHandler) -> int | None:
     auth = handler.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        return TOKENS.get(auth.removeprefix("Bearer ").strip())
+        return parse_auth_token(auth.removeprefix("Bearer ").strip())
     return None
 
 
@@ -595,6 +620,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/books/recommendations":
                 limit = int(query.get("limit", ["10"])[0])
+                if query.get("analysis", ["0"])[0] == "1":
+                    return json_response(self, 200, recommendation_analysis(conn, user_id, limit))
                 return json_response(self, 200, recommendations(conn, user_id, limit))
 
             if path == "/api/users/me/search-history":
@@ -662,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = conn.execute("SELECT * FROM users WHERE username=?", (data.get("username"),)).fetchone()
                 if not user or user["password_hash"] != hash_password(data.get("password", "")):
                     return json_response(self, 401, {"error": "用户名或密码错误"})
-                token = secrets.token_urlsafe(24)
+                token = create_auth_token(user["id"])
                 TOKENS[token] = user["id"]
                 conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now(), user["id"]))
                 return json_response(self, 200, {"token": token, "user": {"id": user["id"], "username": user["username"]}})
@@ -811,13 +838,47 @@ def user_interest_vector(
     return vector
 
 
+def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | None, limit: int = 8) -> list[dict[str, Any]]:
+    if not user_id:
+        return []
+    history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
+    favs = favorite_rows(conn, user_id)
+    if not history and not favs:
+        return []
+    rows = conn.execute("SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id LIMIT 1500").fetchall()
+    _, idf = tfidf_vectors(rows)
+    profile = user_interest_vector(history, favs, idf)
+    return [
+        {"term": term, "weight": round(weight, 4)}
+        for term, weight in sorted(profile.items(), key=lambda item: item[1], reverse=True)[:limit]
+    ]
+
+
+def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched = []
+    for book in books:
+        score = float(book.get("ml_score") or 0.0)
+        enriched.append(book | {"similarity_percent": round(score * 100)})
+    return enriched
+
+
+def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit: int) -> dict[str, Any]:
+    profile = recommendation_profile_keywords(conn, user_id)
+    books = enrich_recommendation_scores(recommendations(conn, user_id, limit))
+    return {
+        "profileKeywords": profile,
+        "summary": "TF-IDF 用户画像 + cosine similarity 个性化推荐。",
+        "books": books,
+    }
+
+
 def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -> list[dict[str, Any]]:
     if not user_id:
         rows = conn.execute(
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [item | {"reason": "默认推荐", "recommendation_method": "default"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "登录后可根据收藏和搜索历史生成推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
 
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
     favs = favorite_rows(conn, user_id)
@@ -865,7 +926,7 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
             "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
             (limit,),
         ).fetchall()
-        return [item | {"reason": "暂无足够历史，显示馆藏推荐", "recommendation_method": "default"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "暂无足够历史，显示馆藏推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
     scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
     return [item[2] for item in scored[:limit]]
 

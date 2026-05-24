@@ -11,6 +11,8 @@ const state = {
   playbackProgress: null,
   playbackStartedAt: null,
   playbackStartProgress: 0,
+  autoPlanEnabled: false,
+  autoPlanTimer: null,
   planRequestId: 0,
   compareRequestId: 0,
   searchKeyword: "",
@@ -99,6 +101,7 @@ function bookCard(book, options = {}) {
       ${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "未分类", keyword)}</span><br>
       书架 ${book.shelf_id} / 第 ${book.shelf_slot} 位 · 坐标 (${book.row}, ${book.col})
       ${book.match_score ? `<br>匹配度：${book.match_score}` : ""}
+      ${book.similarity_percent !== undefined && book.similarity_percent !== null ? `<br><span class="ml-score">相似度：${book.similarity_percent}%</span>` : ""}
       ${snippet ? `<br><span class="snippet">简介：${snippet}</span>` : ""}
       ${book.reason ? `<br>推荐原因：${escapeHtml(book.reason)}` : ""}
     </div>
@@ -178,10 +181,20 @@ async function searchBooks(options = {}) {
 }
 
 async function loadRecommendations() {
-  const books = await api("/api/books/recommendations?limit=10");
+  const data = await api("/api/books/recommendations?limit=10&analysis=1");
   const list = qs("#recommendations");
+  const profile = qs("#mlProfile");
+  const keywords = data.profileKeywords || [];
+  profile.innerHTML = `
+    <div class="ml-summary">${escapeHtml(data.summary || "")}</div>
+    <div class="ml-keywords">
+      ${keywords.length
+        ? keywords.map((item) => `<span>${escapeHtml(item.term)} <strong>${item.weight}</strong></span>`).join("")
+        : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
+    </div>
+  `;
   list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
+  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
 }
 
 async function toggleFavorite(bookId, isFavorite) {
@@ -237,13 +250,12 @@ function renderSelectedSeat() {
   box.textContent = `终点座位：阅读区 (${row}, ${col})`;
 }
 
-function resetPathMetrics(message = "选择图书和座位后，点击左侧“生成路径”查看算法指标。") {
+function resetPathMetrics(message = "等待生成路径") {
   const box = qs("#pathMetrics");
   if (!box) return;
   box.classList.add("analysis-empty");
   box.innerHTML = `
-    <strong>等待生成路径</strong>
-    <span>${escapeHtml(message)}</span>
+    <strong>${escapeHtml(message)}</strong>
   `;
 }
 
@@ -269,15 +281,21 @@ function setAlgorithmSelection(selectId, value) {
   markRouteSettingsChanged();
 }
 
+function scheduleAutoPlan() {
+  if (!state.autoPlanEnabled) return;
+  window.clearTimeout(state.autoPlanTimer);
+  state.autoPlanTimer = window.setTimeout(() => {
+    state.autoPlanTimer = null;
+    planPath({ automatic: true });
+  }, 220);
+}
+
 function markRouteSettingsChanged() {
+  window.clearTimeout(state.autoPlanTimer);
   state.planRequestId += 1;
-  const planButton = qs("#planButton");
-  if (planButton) {
-    planButton.disabled = false;
-    planButton.textContent = "生成路径";
-  }
   resetPlannedRoute();
-  resetPathMetrics("算法设置已改变，请重新点击“生成路径”。");
+  resetPathMetrics();
+  scheduleAutoPlan();
 }
 
 function selectedPickupIds() {
@@ -303,16 +321,11 @@ function renderPickupSelection() {
     box.appendChild(item);
   });
 
-  const addItem = document.createElement("button");
-  addItem.className = `pickup-add-item ${state.pickupSelection.length ? "" : "empty"}`;
-  addItem.id = "addPickupBookButton";
-  addItem.type = "button";
-  addItem.innerHTML = `
-    <span class="pickup-empty-mark">+</span>
-    <span>添加想要取的书</span>
-  `;
-  box.appendChild(addItem);
-
+  if (!state.pickupSelection.length) {
+    box.innerHTML = `
+      <div class="pickup-empty-hint">点击右上角“+”添加想取的书</div>
+    `;
+  }
 }
 
 function toggleAddBookMenu() {
@@ -326,7 +339,8 @@ function closeAddBookMenu() {
   qs("#addBookMenu").hidden = true;
 }
 
-function openNotice(message = "需要点击绿色格子来确定最终座位。") {
+function openNotice(message = "需要点击绿色格子来确定最终座位。", title = "提示") {
+  qs("#noticeTitle").textContent = title;
   qs("#noticeMessage").textContent = message;
   qs("#noticeModal").hidden = false;
 }
@@ -342,9 +356,10 @@ function positionAddBookMenu() {
   if (!menu || !button || !panel) return;
   const buttonRect = button.getBoundingClientRect();
   const panelRect = panel.getBoundingClientRect();
-  menu.style.left = `${buttonRect.left - panelRect.left}px`;
+  const menuWidth = 180;
+  menu.style.left = `${buttonRect.right - panelRect.left - menuWidth}px`;
   menu.style.top = `${buttonRect.bottom - panelRect.top + 6}px`;
-  menu.style.width = `${Math.min(buttonRect.width, 260)}px`;
+  menu.style.width = `${menuWidth}px`;
 }
 
 function resetPlannedRoute() {
@@ -363,16 +378,14 @@ function resetPlannedRoute() {
 
 function removePickupBook(bookId) {
   state.pickupSelection = state.pickupSelection.filter((book) => Number(book.id) !== Number(bookId));
-  resetPlannedRoute();
-  resetPathMetrics("取书清单已改变，请重新点击“生成路径”。");
   renderPickupSelection();
+  markRouteSettingsChanged();
 }
 
 function clearPickupSelection() {
   state.pickupSelection = [];
-  resetPlannedRoute();
-  resetPathMetrics("已清空本次取书，请重新添加图书。");
   renderPickupSelection();
+  markRouteSettingsChanged();
 }
 
 function openPicker(mode, items = []) {
@@ -472,9 +485,9 @@ function confirmPickerSelection() {
     if (state.pickerTempSelected.has(id)) byId.set(id, book);
   });
   state.pickupSelection = [...byId.values()];
-  resetPlannedRoute();
   renderPickupSelection();
   closePicker();
+  markRouteSettingsChanged();
 }
 
 function getVisibleRoutePath() {
@@ -804,9 +817,8 @@ function renderMovingRouteArrow(svg, grid, path, segmentIndex, colorIndex, progr
 
 function selectSeat(row, col) {
   state.selectedSeat = [Number(row), Number(col)];
-  resetPlannedRoute();
   renderSelectedSeat();
-  renderMap();
+  markRouteSettingsChanged();
 }
 
 function openMapModal() {
@@ -821,16 +833,16 @@ function closeMapModal() {
 function updateRouteProgress() {
   const path = getVisibleRoutePath();
   const playButton = qs("#playRouteButton");
-  const pauseButton = qs("#pauseRouteButton");
-  const resetButton = qs("#resetRouteButton");
-  if (!playButton || !pauseButton || !resetButton) return;
+  if (!playButton) return;
 
   const hasPath = path.length > 0;
   const isPlaying = Boolean(state.playbackTimer);
 
-  playButton.disabled = !hasPath || isPlaying;
-  pauseButton.disabled = !isPlaying;
-  resetButton.disabled = !hasPath;
+  playButton.disabled = !hasPath;
+  playButton.classList.toggle("playing", isPlaying);
+  playButton.textContent = isPlaying ? "Ⅱ" : "▶";
+  playButton.title = isPlaying ? "暂停" : "播放";
+  playButton.setAttribute("aria-label", isPlaying ? "暂停路线播放" : "播放路线");
 }
 
 function pauseRouteAnimation() {
@@ -886,6 +898,14 @@ function playRouteAnimation() {
   updateRouteProgress();
 }
 
+function toggleRouteAnimation() {
+  if (state.playbackTimer) {
+    pauseRouteAnimation();
+    return;
+  }
+  playRouteAnimation();
+}
+
 function renderRouteSteps() {
   const box = qs("#routeSteps");
   box.innerHTML = "";
@@ -894,8 +914,7 @@ function renderRouteSteps() {
   if (!state.segments.length) {
     box.innerHTML = `
       <div class="route-empty">
-        <span class="route-empty-mark">→</span>
-        <span><strong>尚未生成路径</strong><br>生成路径后会显示取书步骤。</span>
+        生成路径后会显示取书步骤
       </div>
     `;
     return;
@@ -956,23 +975,29 @@ function moveRouteSegment(delta) {
   selectRouteSegment(current + delta, true);
 }
 
-async function planPath() {
+async function planPath(options = {}) {
+  window.clearTimeout(state.autoPlanTimer);
+  state.autoPlanTimer = null;
   const ids = state.pickupSelection.map((book) => Number(book.id));
-  const planButton = qs("#planButton");
   if (!ids.length) {
-    resetPathMetrics("请至少选择一本想取的书。");
+    openNotice("需要至少选择一本想取的书。", "需要选择图书");
+    resetPathMetrics();
     return;
   }
   if (!state.selectedSeat) {
-    openNotice("需要点击绿色格子来确定最终座位。");
+    openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
     return;
   }
   const algorithm = qs("#algorithmSelect").value;
-  const method = qs("#solverSelect")?.value || "greedy";
+  const method = qs("#solverSelect")?.value || "";
+  if (!algorithm || !method) {
+    openNotice("需要先选择两点路径算法和整体取书算法。", "需要选择算法");
+    resetPathMetrics();
+    return;
+  }
   const requestId = ++state.planRequestId;
   pauseRouteAnimation();
-  planButton.disabled = true;
-  planButton.textContent = "生成中...";
+  resetPathMetrics("路径生成中...");
   let result;
   try {
     result = await api("/api/pickup/solve", {
@@ -989,24 +1014,21 @@ async function planPath() {
     state.playbackProgress = null;
     state.playbackStartedAt = null;
     state.playbackStartProgress = 0;
-    resetPathMetrics(err.message);
+    resetPathMetrics();
     renderRouteSteps();
     renderMap();
     updateRouteProgress();
-  } finally {
-    if (requestId === state.planRequestId) {
-      planButton.disabled = false;
-      planButton.textContent = "生成路径";
-    }
+    return;
   }
   if (!result) return;
   if (result.algorithm !== algorithm || result.method !== method) {
-    resetPathMetrics("生成结果与当前算法设置不一致，请重新生成路径。");
+    resetPathMetrics();
     return;
   }
   state.path = result.path || [];
   state.targets = result.visitOrder || [];
   state.segments = result.segments || [];
+  state.autoPlanEnabled = true;
   state.activeSegment = null;
   state.playbackProgress = null;
   state.playbackStartedAt = null;
@@ -1055,11 +1077,11 @@ function openCompareModal() {
 function compareTaskPayload() {
   const ids = state.pickupSelection.map((book) => Number(book.id));
   if (!ids.length) {
-    openNotice("请至少选择一本想取的书。");
+    openNotice("请至少选择一本想取的书。", "需要选择图书");
     return null;
   }
   if (!state.selectedSeat) {
-    openNotice("需要点击绿色格子来确定最终座位。");
+    openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
     return null;
   }
   return { ids, end: state.selectedSeat };
@@ -1072,6 +1094,10 @@ async function openAlgorithmCompare(type) {
   const requestId = ++state.compareRequestId;
   const currentPathAlgorithm = qs("#algorithmSelect").value;
   const currentOrderAlgorithm = qs("#solverSelect").value;
+  if (!currentPathAlgorithm || !currentOrderAlgorithm) {
+    qs("#compareTableWrap").innerHTML = `<div class="compare-error">请先选择两点路径算法和整体取书算法。</div>`;
+    return;
+  }
   const comparePath = type === "path";
   const title = comparePath ? "两点路径算法比较" : "整体取书算法比较";
   const fixedLabel = comparePath
@@ -1119,7 +1145,26 @@ async function openAlgorithmCompare(type) {
 
 function renderCompareRows(rows) {
   const successful = rows.filter((row) => row.result && row.result.distance != null);
-  const bestDistance = successful.length ? Math.min(...successful.map((row) => Number(row.result.distance))) : null;
+  const metricKeys = ["distance", "pathExpanded", "solverExpanded", "runtimeMs"];
+  const metricRanges = Object.fromEntries(metricKeys.map((key) => {
+    const values = successful
+      .map((row) => Number(row.result[key]))
+      .filter((value) => Number.isFinite(value));
+    if (!values.length) return [key, { min: null, max: null }];
+    return [key, { min: Math.min(...values), max: Math.max(...values) }];
+  }));
+  const metricClass = (key, value) => {
+    const number = Number(value);
+    const range = metricRanges[key];
+    if (!range || range.min == null || range.max == null || range.min === range.max || !Number.isFinite(number)) return "";
+    if (number === range.min) return "metric-best";
+    if (number === range.max) return "metric-worst";
+    return "";
+  };
+  const metricCell = (key, value, suffix = "") => {
+    if (value == null) return `<td>-</td>`;
+    return `<td class="${metricClass(key, value)}">${value}${suffix}</td>`;
+  };
   qs("#compareTableWrap").innerHTML = `
     <table class="compare-table">
       <thead>
@@ -1142,14 +1187,13 @@ function renderCompareRows(rows) {
             `;
           }
           const result = row.result;
-          const isBest = bestDistance != null && Number(result.distance) === bestDistance;
           return `
             <tr class="${row.current ? "current" : ""}">
-              <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}${isBest ? `<span class="best-badge">最佳</span>` : ""}</td>
-              <td>${result.distance ?? "-"}</td>
-              <td>${result.pathExpanded ?? "-"}</td>
-              <td>${result.solverExpanded ?? "-"}</td>
-              <td>${result.runtimeMs ?? "-"} ms</td>
+              <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}</td>
+              ${metricCell("distance", result.distance)}
+              ${metricCell("pathExpanded", result.pathExpanded)}
+              ${metricCell("solverExpanded", result.solverExpanded)}
+              ${metricCell("runtimeMs", result.runtimeMs, " ms")}
             </tr>
           `;
         }).join("")}
@@ -1301,9 +1345,7 @@ function bindEvents() {
     if (event.target.id === "bookPickerModal") closePicker();
   });
   qs("#planButton").addEventListener("click", planPath);
-  qs("#playRouteButton").addEventListener("click", playRouteAnimation);
-  qs("#pauseRouteButton").addEventListener("click", pauseRouteAnimation);
-  qs("#resetRouteButton").addEventListener("click", resetRouteAnimation);
+  qs("#playRouteButton").addEventListener("click", toggleRouteAnimation);
   qs("#previousRouteStep").addEventListener("click", () => moveRouteSegment(-1));
   qs("#nextRouteStep").addEventListener("click", () => moveRouteSegment(1));
   qs("#solverSelect").addEventListener("change", markRouteSettingsChanged);
