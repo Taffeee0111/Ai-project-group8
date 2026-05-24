@@ -11,6 +11,8 @@ const state = {
   playbackProgress: null,
   playbackStartedAt: null,
   playbackStartProgress: 0,
+  planRequestId: 0,
+  compareRequestId: 0,
   searchKeyword: "",
   pickupSelection: [],
   pickerMode: "",
@@ -22,6 +24,18 @@ const state = {
 const ROUTE_PLAYBACK_STEP_MS = 90;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROUTE_COLORS = ["#2364aa", "#e4572e", "#0f8b8d", "#8a4fff", "#b7791f", "#00875a", "#c026d3", "#475569"];
+const PATH_ALGORITHMS = [
+  ["bfs", "BFS"],
+  ["ucs", "Uniform Cost Search"],
+  ["astar_manhattan", "A* 曼哈顿"],
+  ["astar_euclidean", "A* 欧几里得"],
+];
+const ORDER_ALGORITHMS = [
+  ["greedy", "贪心最近邻"],
+  ["greedy_2opt", "贪心 + 2-opt"],
+  ["state_astar", "状态空间 A*"],
+  ["branch_bound", "分支限界"],
+];
 
 const titles = {
   login: ["登录 / 注册", "进入系统后可保存搜索历史、收藏和取书计划。"],
@@ -207,6 +221,8 @@ async function loadPickup() {
   renderPickupSelection();
   renderSelectedSeat();
   renderRouteSteps();
+  syncAlgorithmOptions("algorithmSelect");
+  syncAlgorithmOptions("solverSelect");
   renderMap();
 }
 
@@ -221,11 +237,47 @@ function renderSelectedSeat() {
   box.textContent = `终点座位：阅读区 (${row}, ${col})`;
 }
 
-function updateAlgorithmSummary() {
-  const solver = qs("#solverSelect")?.selectedOptions?.[0]?.textContent || "Greedy";
-  const strategy = qs("#algorithmSelect")?.selectedOptions?.[0]?.textContent || "A* Search";
-  const box = qs("#algorithmSummary");
-  if (box) box.textContent = `当前算法：${solver} + ${strategy}`;
+function resetPathMetrics(message = "选择图书和座位后，点击左侧“生成路径”查看算法指标。") {
+  const box = qs("#pathMetrics");
+  if (!box) return;
+  box.classList.add("analysis-empty");
+  box.innerHTML = `
+    <strong>等待生成路径</strong>
+    <span>${escapeHtml(message)}</span>
+  `;
+}
+
+function selectedOptionText(selector, fallback) {
+  const element = qs(selector);
+  return element?.selectedOptions?.[0]?.textContent || fallback;
+}
+
+function syncAlgorithmOptions(selectId) {
+  const select = qs(`#${selectId}`);
+  const group = qs(`[data-algorithm-group="${selectId}"]`);
+  if (!select || !group) return;
+  group.querySelectorAll(".algorithm-option").forEach((button) => {
+    button.classList.toggle("active", button.dataset.value === select.value);
+  });
+}
+
+function setAlgorithmSelection(selectId, value) {
+  const select = qs(`#${selectId}`);
+  if (!select || select.value === value) return;
+  select.value = value;
+  syncAlgorithmOptions(selectId);
+  markRouteSettingsChanged();
+}
+
+function markRouteSettingsChanged() {
+  state.planRequestId += 1;
+  const planButton = qs("#planButton");
+  if (planButton) {
+    planButton.disabled = false;
+    planButton.textContent = "生成路径";
+  }
+  resetPlannedRoute();
+  resetPathMetrics("算法设置已改变，请重新点击“生成路径”。");
 }
 
 function selectedPickupIds() {
@@ -312,12 +364,14 @@ function resetPlannedRoute() {
 function removePickupBook(bookId) {
   state.pickupSelection = state.pickupSelection.filter((book) => Number(book.id) !== Number(bookId));
   resetPlannedRoute();
+  resetPathMetrics("取书清单已改变，请重新点击“生成路径”。");
   renderPickupSelection();
 }
 
 function clearPickupSelection() {
   state.pickupSelection = [];
   resetPlannedRoute();
+  resetPathMetrics("已清空本次取书，请重新添加图书。");
   renderPickupSelection();
 }
 
@@ -711,12 +765,10 @@ function renderRouteSegment(svg, grid, segment, index, muted) {
   line.style.strokeDasharray = `${totalLength}`;
   line.style.strokeDashoffset = `${Math.max(0, totalLength - progressLength)}`;
 
-  if (segment.type !== "seat") {
-    if (progress >= path.length - 1) {
-      renderRouteArrow(svg, points, colorIndex, muted);
-    } else if (!muted && progress > 0) {
-      renderMovingRouteArrow(svg, grid, path, index, colorIndex, progress);
-    }
+  if (progress >= path.length - 1) {
+    renderRouteArrow(svg, points, colorIndex, muted);
+  } else if (!muted && progress > 0) {
+    renderMovingRouteArrow(svg, grid, path, index, colorIndex, progress);
   }
 }
 
@@ -838,6 +890,7 @@ function renderRouteSteps() {
   const box = qs("#routeSteps");
   box.innerHTML = "";
   qs("#routeStepCount").textContent = `${state.segments.length} 步`;
+  updateRouteStepNavigation();
   if (!state.segments.length) {
     box.innerHTML = `
       <div class="route-empty">
@@ -852,6 +905,7 @@ function renderRouteSteps() {
     const item = document.createElement("button");
     item.className = `route-step ${state.activeSegment === index ? "active" : ""}`;
     item.dataset.segment = index;
+    item.id = `routeStep${index}`;
     const directions = segment.instructions?.length ? segment.instructions.join("，") : "无需移动";
     const title = segment.type === "seat"
       ? "前往阅读区"
@@ -872,10 +926,41 @@ function renderRouteSteps() {
   });
 }
 
+function updateRouteStepNavigation() {
+  const previous = qs("#previousRouteStep");
+  const next = qs("#nextRouteStep");
+  if (!previous || !next) return;
+  const hasSteps = state.segments.length > 0;
+  previous.disabled = !hasSteps || state.activeSegment == null || state.activeSegment <= 0;
+  next.disabled = !hasSteps || state.activeSegment === state.segments.length - 1;
+}
+
+function selectRouteSegment(index, shouldPlay = false) {
+  if (!state.segments.length) return;
+  const nextIndex = Math.max(0, Math.min(index, state.segments.length - 1));
+  pauseRouteAnimation();
+  state.activeSegment = nextIndex;
+  state.playbackProgress = null;
+  state.playbackStartedAt = null;
+  state.playbackStartProgress = 0;
+  renderRouteSteps();
+  renderMap();
+  updateRouteProgress();
+  qs(`#routeStep${nextIndex}`)?.scrollIntoView({ block: "nearest" });
+  if (shouldPlay) playRouteAnimation();
+}
+
+function moveRouteSegment(delta) {
+  if (!state.segments.length) return;
+  const current = state.activeSegment == null ? (delta > 0 ? -1 : state.segments.length) : state.activeSegment;
+  selectRouteSegment(current + delta, true);
+}
+
 async function planPath() {
   const ids = state.pickupSelection.map((book) => Number(book.id));
+  const planButton = qs("#planButton");
   if (!ids.length) {
-    qs("#pathMetrics").textContent = "请至少选择一本想取的书。";
+    resetPathMetrics("请至少选择一本想取的书。");
     return;
   }
   if (!state.selectedSeat) {
@@ -884,14 +969,19 @@ async function planPath() {
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "greedy";
+  const requestId = ++state.planRequestId;
   pauseRouteAnimation();
+  planButton.disabled = true;
+  planButton.textContent = "生成中...";
   let result;
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
       body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat }),
     });
+    if (requestId !== state.planRequestId) return;
   } catch (err) {
+    if (requestId !== state.planRequestId) return;
     state.path = [];
     state.targets = [];
     state.segments = [];
@@ -899,10 +989,19 @@ async function planPath() {
     state.playbackProgress = null;
     state.playbackStartedAt = null;
     state.playbackStartProgress = 0;
-    qs("#pathMetrics").textContent = err.message;
+    resetPathMetrics(err.message);
     renderRouteSteps();
     renderMap();
     updateRouteProgress();
+  } finally {
+    if (requestId === state.planRequestId) {
+      planButton.disabled = false;
+      planButton.textContent = "生成路径";
+    }
+  }
+  if (!result) return;
+  if (result.algorithm !== algorithm || result.method !== method) {
+    resetPathMetrics("生成结果与当前算法设置不一致，请重新生成路径。");
     return;
   }
   state.path = result.path || [];
@@ -912,24 +1011,151 @@ async function planPath() {
   state.playbackProgress = null;
   state.playbackStartedAt = null;
   state.playbackStartProgress = 0;
+  const pathAlgorithm = selectedOptionText("#algorithmSelect", result.algorithm.toUpperCase());
+  const orderAlgorithm = selectedOptionText("#solverSelect", String(result.method || method).toUpperCase());
+  qs("#pathMetrics").classList.remove("analysis-empty");
   qs("#pathMetrics").innerHTML = `
-    <strong>算法指标</strong><br>
-    求解方式：${escapeHtml(String(result.method || method).toUpperCase())}<br>
-    策略：${result.algorithm.toUpperCase()}<br>
-    扩展节点：${result.expanded}<br>
-    运行时间：${result.runtimeMs} ms<br>
-    ${result.solverExpanded != null ? `组合求解扩展：${result.solverExpanded}<br>` : ""}
-    ${result.precomputeExpanded != null ? `两点最短路扩展：${result.precomputeExpanded}<br>` : ""}
-    <br>
-    <strong>路线摘要</strong><br>
-    共需取书：${result.visitOrder.length} 本<br>
-    总代价：${result.distance}<br>
-    终点座位：(${result.end?.[0] ?? state.selectedSeat[0]}, ${result.end?.[1] ?? state.selectedSeat[1]})<br>
-    推荐顺序：${result.visitOrder.map((b) => escapeHtml(b.shelf_id)).join(" → ")} → 阅读区
+    <section class="analysis-group">
+      <div class="metric-row"><span>总代价</span><strong>${result.distance}</strong></div>
+      <div class="metric-row"><span>两点算法</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
+      <div class="metric-row"><span>整体算法</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
+      ${result.pathExpanded != null ? `<div class="metric-row"><span>底层路径扩展</span><strong>${result.pathExpanded}</strong></div>` : ""}
+      ${result.solverExpanded != null ? `<div class="metric-row"><span>整体规划扩展</span><strong>${result.solverExpanded}</strong></div>` : ""}
+      <div class="metric-row"><span>运行时间</span><strong>${result.runtimeMs} ms</strong></div>
+    </section>
   `;
   renderRouteSteps();
   renderMap();
   updateRouteProgress();
+}
+
+function compareLabel(list, value) {
+  return list.find(([key]) => key === value)?.[1] || value;
+}
+
+function closeCompareModal() {
+  state.compareRequestId += 1;
+  qs("#algorithmCompareModal").hidden = true;
+}
+
+function openCompareModal() {
+  const task = compareTaskPayload();
+  if (!task) return;
+  qs("#compareTitle").textContent = "多算法比较";
+  qs("#compareSubtitle").textContent = "选择固定一类算法后，比较另一类算法的表现。";
+  qs("#compareSummary").innerHTML = `
+    <span>本次取书<strong>${task.ids.length} 本</strong></span>
+    <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>当前组合<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
+  `;
+  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">请选择一种比较方式。</div>`;
+  qs("#algorithmCompareModal").hidden = false;
+}
+
+function compareTaskPayload() {
+  const ids = state.pickupSelection.map((book) => Number(book.id));
+  if (!ids.length) {
+    openNotice("请至少选择一本想取的书。");
+    return null;
+  }
+  if (!state.selectedSeat) {
+    openNotice("需要点击绿色格子来确定最终座位。");
+    return null;
+  }
+  return { ids, end: state.selectedSeat };
+}
+
+async function openAlgorithmCompare(type) {
+  const task = compareTaskPayload();
+  if (!task) return;
+
+  const requestId = ++state.compareRequestId;
+  const currentPathAlgorithm = qs("#algorithmSelect").value;
+  const currentOrderAlgorithm = qs("#solverSelect").value;
+  const comparePath = type === "path";
+  const title = comparePath ? "两点路径算法比较" : "整体取书算法比较";
+  const fixedLabel = comparePath
+    ? `固定整体算法：${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
+    : `固定两点算法：${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)}`;
+  const candidates = comparePath ? PATH_ALGORITHMS : ORDER_ALGORITHMS;
+
+  qs("#compareTitle").textContent = title;
+  qs("#compareSubtitle").textContent = "比较结果只用于分析，不会改变当前地图路线。";
+  qs("#compareSummary").innerHTML = `
+    <span>本次取书<strong>${task.ids.length} 本</strong></span>
+    <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>${escapeHtml(fixedLabel.split("：")[0])}<strong>${escapeHtml(fixedLabel.split("：")[1] || "-")}</strong></span>
+  `;
+  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">比较中...</div>`;
+  qs("#algorithmCompareModal").hidden = false;
+
+  const rows = [];
+  for (const [value, label] of candidates) {
+    const algorithm = comparePath ? value : currentPathAlgorithm;
+    const method = comparePath ? currentOrderAlgorithm : value;
+    try {
+      const result = await api("/api/pickup/solve", {
+        method: "POST",
+        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end }),
+      });
+      rows.push({
+        value,
+        label,
+        current: comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
+        result,
+      });
+    } catch (err) {
+      rows.push({
+        value,
+        label,
+        current: comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
+        error: err.message,
+      });
+    }
+    if (requestId !== state.compareRequestId) return;
+  }
+  renderCompareRows(rows);
+}
+
+function renderCompareRows(rows) {
+  const successful = rows.filter((row) => row.result && row.result.distance != null);
+  const bestDistance = successful.length ? Math.min(...successful.map((row) => Number(row.result.distance))) : null;
+  qs("#compareTableWrap").innerHTML = `
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>算法</th>
+          <th>总代价</th>
+          <th>底层路径扩展</th>
+          <th>整体规划扩展</th>
+          <th>运行时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => {
+          if (row.error) {
+            return `
+              <tr class="${row.current ? "current" : ""}">
+                <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}</td>
+                <td colspan="4">${escapeHtml(row.error)}</td>
+              </tr>
+            `;
+          }
+          const result = row.result;
+          const isBest = bestDistance != null && Number(result.distance) === bestDistance;
+          return `
+            <tr class="${row.current ? "current" : ""}">
+              <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}${isBest ? `<span class="best-badge">最佳</span>` : ""}</td>
+              <td>${result.distance ?? "-"}</td>
+              <td>${result.pathExpanded ?? "-"}</td>
+              <td>${result.solverExpanded ?? "-"}</td>
+              <td>${result.runtimeMs ?? "-"} ms</td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 async function loadProfile() {
@@ -1078,8 +1304,20 @@ function bindEvents() {
   qs("#playRouteButton").addEventListener("click", playRouteAnimation);
   qs("#pauseRouteButton").addEventListener("click", pauseRouteAnimation);
   qs("#resetRouteButton").addEventListener("click", resetRouteAnimation);
-  qs("#solverSelect").addEventListener("change", updateAlgorithmSummary);
-  qs("#algorithmSelect").addEventListener("change", updateAlgorithmSummary);
+  qs("#previousRouteStep").addEventListener("click", () => moveRouteSegment(-1));
+  qs("#nextRouteStep").addEventListener("click", () => moveRouteSegment(1));
+  qs("#solverSelect").addEventListener("change", markRouteSettingsChanged);
+  qs("#algorithmSelect").addEventListener("change", markRouteSettingsChanged);
+  document.querySelectorAll("[data-algorithm-group]").forEach((group) => {
+    group.addEventListener("click", (event) => {
+      const option = event.target.closest(".algorithm-option");
+      if (!option) return;
+      setAlgorithmSelection(group.dataset.algorithmGroup, option.dataset.value);
+    });
+  });
+  qs("#openCompareModal").addEventListener("click", openCompareModal);
+  qs("#comparePathAlgorithms").addEventListener("click", () => openAlgorithmCompare("path"));
+  qs("#compareOrderAlgorithms").addEventListener("click", () => openAlgorithmCompare("order"));
   qs("#libraryGrid").addEventListener("click", (event) => {
     const cell = event.target.closest("[data-seat='true']");
     if (cell) selectSeat(cell.dataset.row, cell.dataset.col);
@@ -1093,6 +1331,10 @@ function bindEvents() {
   qs("#noticeModal").addEventListener("click", (event) => {
     if (event.target.id === "noticeModal") closeNotice();
   });
+  qs("#closeCompareModal").addEventListener("click", closeCompareModal);
+  qs("#algorithmCompareModal").addEventListener("click", (event) => {
+    if (event.target.id === "algorithmCompareModal") closeCompareModal();
+  });
   qs("#libraryGridLarge").addEventListener("click", (event) => {
     const cell = event.target.closest("[data-seat='true']");
     if (cell) selectSeat(cell.dataset.row, cell.dataset.col);
@@ -1100,19 +1342,24 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !qs("#mapModal").hidden) closeMapModal();
     if (event.key === "Escape" && !qs("#noticeModal").hidden) closeNotice();
+    if (event.key === "Escape" && !qs("#algorithmCompareModal").hidden) closeCompareModal();
   });
   qs("#routeSteps").addEventListener("click", (event) => {
     const step = event.target.closest("[data-segment]");
     if (!step) return;
     const index = Number(step.dataset.segment);
-    pauseRouteAnimation();
-    state.activeSegment = state.activeSegment === index ? null : index;
-    state.playbackProgress = null;
-    state.playbackStartedAt = null;
-    state.playbackStartProgress = 0;
-    renderRouteSteps();
-    renderMap();
-    updateRouteProgress();
+    if (state.activeSegment === index) {
+      pauseRouteAnimation();
+      state.activeSegment = null;
+      state.playbackProgress = null;
+      state.playbackStartedAt = null;
+      state.playbackStartProgress = 0;
+      renderRouteSteps();
+      renderMap();
+      updateRouteProgress();
+    } else {
+      selectRouteSegment(index, true);
+    }
   });
   qs("#authSubmit").addEventListener("click", submitAuth);
   document.querySelectorAll(".toggle-password").forEach((button) => {
@@ -1148,7 +1395,6 @@ function switchAuth(register) {
 
 async function boot() {
   bindEvents();
-  updateAlgorithmSummary();
   await loadStats();
   await loadMe();
   await searchBooks({ record: false });

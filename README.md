@@ -14,19 +14,21 @@
 - 在取书界面构建“本次取书”任务篮，可从“我的收藏”或搜索结果中直接加入图书。
 - 基于 `30 * 30` 图书馆地图规划路线：入口出发，经过目标书架，最终到用户选择的阅读区座位。
 - 地图包含书架、阅读区、拥堵区和入口；书架与阅读区不可穿过，拥堵区可通行但每步代价为 2。
-- 支持 BFS、Uniform Cost Search 和 A* Search 作为底层路径搜索策略。
-- 支持 Greedy、Planning 和 CSP 作为多本书访问顺序求解方式。
+- 支持 BFS、Uniform Cost Search、A* 曼哈顿和 A* 欧几里得作为底层两点路径搜索策略。
+- 支持贪心最近邻、贪心 + 2-opt、状态空间 A* 搜索和分支限界搜索作为多本书访问顺序求解方式。
 - 前端提供地图可视化、路径播放、步骤高亮、放大地图弹窗和算法指标展示。
 
 ## 数据
 
-系统首次启动时会尝试读取：
+系统首次启动时会从项目目录读取：
 
 ```text
 backend/data/book_collection_filled_1500.docx
 ```
 
 如果文件存在，会自动导入 1500 本图书。如果文件不存在，会使用一组演示数据，方便系统仍然可以运行。
+
+后端使用 `backend/server.py` 所在位置推导项目根目录，因此移动整个项目文件夹后，仍会读取项目内的 `backend/data/book_collection_filled_1500.docx`，不会依赖某台电脑上的个人绝对路径。
 
 当前地图根据代码中的 `SHELF_GROUPS` 生成 `248` 个书架格。1500 本图书会循环映射到这些实际书架上，不再强行假设 300 个书架或每个书架固定 5 本书。
 
@@ -90,13 +92,13 @@ password: demo123
 ```json
 {
   "bookIds": [1, 2, 3],
-  "algorithm": "astar",
+  "algorithm": "astar_manhattan",
   "method": "greedy",
   "end": [10, 10]
 }
 ```
 
-其中 `algorithm` 可选 `astar`、`bfs`、`ucs`；`method` 可选 `greedy`、`planning`、`csp`；`end` 是用户在绿色阅读区选择的最终座位坐标。
+其中 `algorithm` 可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`；`method` 可选 `greedy`、`greedy_2opt`、`state_astar`、`branch_bound`；`end` 是用户在绿色阅读区选择的最终座位坐标。
 
 ## 项目结构
 

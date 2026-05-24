@@ -11,7 +11,7 @@
 - 后端：Python 标准库 `http.server`，入口为 `backend/server.py`。
 - 数据库：SQLite，数据库文件为 `backend/data/library.db`。
 - 前端：静态 HTML/CSS/JavaScript，位于 `frontend/static/`。
-- 数据来源：优先读取 `backend/data/book_collection_filled_1500.docx`，若不存在则生成演示数据。
+- 数据来源：优先读取项目内的 `backend/data/book_collection_filled_1500.docx`，若不存在则生成演示数据。
 - 启动方式：运行 `python backend/server.py` 或使用 README 中的 Codex bundled Python 命令。
 
 当前代码没有使用 FastAPI、React、Vue、TypeScript、JWT 或前端构建流程。登录状态由后端内存 `TOKENS` 保存，前端通过 `Authorization: Bearer <token>` 调用 API。
@@ -29,8 +29,8 @@
 - 30 * 30 图书馆地图可视化。
 - 点击绿色阅读区座位作为最终终点。
 - 取书路径生成、步骤列表、路径播放、暂停、重置和放大地图弹窗。
-- Greedy、Planning、CSP 三种多目标访问顺序求解方式。
-- BFS、Uniform Cost Search、A* Search 三种底层路径搜索策略。
+- 贪心最近邻、贪心 + 2-opt、状态空间 A* 搜索、分支限界搜索四种多目标访问顺序求解方式。
+- BFS、Uniform Cost Search、A* 曼哈顿、A* 欧几里得四种底层路径搜索策略。
 - 算法指标展示，包括总代价、扩展节点数、运行时间、求解扩展节点等。
 
 ## 3. 数据与数据库
@@ -45,7 +45,7 @@
 
 图书导入逻辑：
 
-- 若 `book_collection_filled_1500.docx` 存在，后端解析 Word 表格。
+- 若项目内的 `backend/data/book_collection_filled_1500.docx` 存在，后端解析 Word 表格。
 - 解析字段包括 `序号`、`书名`、`作者`、`页数（可选）`、`简介（可选）`、`标签`。
 - 若 Word 文件不存在，则生成 150 本演示图书。
 - 如果数据库已存在图书，启动时不会重复导入，而是根据当前书架布局刷新图书位置。
@@ -85,7 +85,8 @@
 
 - BFS：按步数扩展，不考虑拥堵区权重的优先级，但返回路径总代价时仍按格子代价统计。
 - Uniform Cost Search：使用优先队列，按累计移动代价寻找低代价路径。
-- A* Search：在 UCS 基础上加入曼哈顿距离启发式。
+- A* 曼哈顿：在 UCS 基础上加入曼哈顿距离启发式，适合四方向网格移动。
+- A* 欧几里得：在 UCS 基础上加入欧几里得距离启发式，用于对比不同启发式函数对扩展节点的影响。
 
 移动规则：
 
@@ -96,11 +97,12 @@
 
 上层多目标访问顺序策略：
 
-- Greedy：每次从当前位置选择距离最近的下一个取书点。
-- Planning：把状态建模为 `(当前位置, 已访问集合)`，使用状态空间搜索确定访问顺序。
-- CSP：使用回溯和分支限界搜索访问顺序，约束为每本书恰好访问一次，目标为总代价最小。
+- 贪心最近邻：每次从当前位置选择距离最近的下一个取书点，速度快但不保证全局最优。
+- 贪心 + 2-opt：先生成贪心顺序，再通过局部反转片段改进总代价。
+- 状态空间 A* 搜索：把状态建模为 `(当前位置, 已访问集合)`，使用 A* 搜索整体访问顺序。
+- 分支限界搜索：在排列空间中使用下界剪枝，目标为总代价最小。
 
-Planning 和 CSP 当前最多支持 10 本书；超过 10 本会返回错误提示，建议使用 Greedy。
+状态空间 A* 搜索和分支限界搜索当前最多支持 10 本书；超过 10 本会返回错误提示，建议使用贪心类算法。
 
 ## 6. 推荐系统
 
@@ -166,7 +168,7 @@ Planning 和 CSP 当前最多支持 10 本书；超过 10 本会返回错误提�
 ```json
 {
   "bookIds": [1, 2, 3],
-  "algorithm": "astar",
+  "algorithm": "astar_manhattan",
   "method": "greedy",
   "end": [10, 10]
 }
@@ -175,8 +177,8 @@ Planning 和 CSP 当前最多支持 10 本书；超过 10 本会返回错误提�
 字段说明：
 
 - `bookIds`：要取的图书数据库 ID。
-- `algorithm`：可选 `astar`、`bfs`、`ucs`。
-- `method`：可选 `greedy`、`planning`、`csp`。
+- `algorithm`：可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`。
+- `method`：可选 `greedy`、`greedy_2opt`、`state_astar`、`branch_bound`。
 - `end`：用户点击选择的阅读区座位坐标。
 
 返回结果包含：
@@ -253,7 +255,7 @@ start_server.bat
 - 书架和阅读区如何影响可通行性。
 - 拥堵区如何让“最短步数”和“最低总代价”产生差异。
 - BFS、UCS、A* 在扩展节点数、运行时间和总代价上的对比。
-- Greedy、Planning、CSP 在多目标访问顺序上的差异。
+- 贪心最近邻、贪心 + 2-opt、状态空间 A* 搜索、分支限界搜索在多目标访问顺序上的差异。
 - TF-IDF + cosine similarity 推荐系统作为扩展功能。
 
 推荐演示流程：
@@ -262,5 +264,5 @@ start_server.bat
 2. 搜索并收藏几本书，观察推荐变化。
 3. 进入取书页，从收藏或搜索加入多本书。
 4. 点击绿色阅读区选择终点座位。
-5. 分别切换 Greedy、Planning、CSP 和 BFS、UCS、A*。
+5. 分别切换四种整体取书算法和 BFS、UCS、A* 曼哈顿、A* 欧几里得。
 6. 比较路线、总代价、扩展节点和运行时间。
