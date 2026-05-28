@@ -16,6 +16,7 @@ const state = {
   planRequestId: 0,
   compareRequestId: 0,
   searchKeyword: "",
+  searchFacets: null,
   pickupSelection: [],
   pickerMode: "",
   pickerItems: [],
@@ -41,7 +42,7 @@ const ORDER_ALGORITHMS = [
 
 const titles = {
   login: ["登录 / 注册", "进入系统后可保存搜索历史、收藏和取书计划。"],
-  search: ["图书搜索", "搜索 1500 本馆藏图书，收藏后可生成取书路线。"],
+  search: ["图书搜索", "搜索 10000 本 Goodreads 图书，收藏后可生成取书路线。"],
   pickup: ["取书路径规划", "在 30 × 30 棋盘地图上比较 BFS、UCS 和 A* 搜索策略。"],
   profile: ["个人中心", "查看用户名、搜索历史和收藏图书。"],
 };
@@ -87,31 +88,139 @@ function setPage(page) {
 
 function bookCard(book, options = {}) {
   const keyword = options.highlight || "";
-  const snippet = descriptionSnippet(book.description, keyword);
+  const useDatasetSummary = Boolean(options.datasetMeta);
+  const useDetails = Boolean(options.collapsibleDetails);
+  const useRecommendationMeta = Boolean(options.recommendationMeta);
+  const detailId = `book-details-${book.id}`;
   const canToggleFavorite = options.favoriteToggle;
   const isFavorite = Boolean(book.is_favorite);
   const favoriteButton = isFavorite
     ? `<button class="favorite-button active" data-fav-toggle="${book.id}" data-favorite="true">已收藏</button>`
     : `<button class="favorite-button" data-fav-toggle="${book.id}" data-favorite="false">收藏</button>`;
+  const detailsButton = useDetails
+    ? `<button class="book-details-toggle" data-book-details-toggle="${detailId}" aria-expanded="false" aria-controls="${detailId}">详情 ▾</button>`
+    : "";
   const div = document.createElement("article");
   div.className = "book-card";
   div.innerHTML = `
     <h3>${highlightText(book.title, keyword)}</h3>
-    <div class="book-meta">
-      ${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "未分类", keyword)}</span><br>
-      书架 ${book.shelf_id} / 第 ${book.shelf_slot} 位 · 坐标 (${book.row}, ${book.col})
-      ${book.match_score ? `<br>匹配度：${book.match_score}` : ""}
+    <div class="book-card-summary">
+      <div class="book-meta-line">${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "未分类", keyword)}</span></div>
+      ${useDatasetSummary ? bookPublisherLine(book, keyword) : `<div class="book-meta-line">书架 ${escapeHtml(book.shelf_id)} / 第 ${escapeHtml(book.shelf_slot)} 位 · 坐标 (${escapeHtml(book.row)}, ${escapeHtml(book.col)})</div>`}
+      ${useDatasetSummary ? bookMetricGrid(book) : ""}
+      ${useDatasetSummary ? genrePreview(book.genres, keyword) : ""}
       ${book.similarity_percent !== undefined && book.similarity_percent !== null ? `<br><span class="ml-score">相似度：${book.similarity_percent}%</span>` : ""}
-      ${snippet ? `<br><span class="snippet">简介：${snippet}</span>` : ""}
-      ${book.reason ? `<br>推荐原因：${escapeHtml(book.reason)}` : ""}
+      ${!useDatasetSummary && book.reason ? `<br>推荐原因：${escapeHtml(book.reason)}` : ""}
+      ${useRecommendationMeta ? recommendationScoreBreakdown(book) : ""}
     </div>
+    ${useDetails ? bookDetailsPanel(book, keyword, detailId) : ""}
     <div class="book-actions">
       <span class="book-meta">${escapeHtml(book.status || "available")}</span>
+      <span class="book-action-buttons">
+      ${detailsButton}
       ${canToggleFavorite ? favoriteButton : ""}
       ${options.unfavorite ? `<button data-unfav="${book.id}">取消收藏</button>` : ""}
+      </span>
     </div>
   `;
   return div;
+}
+
+function recommendationScoreBreakdown(book) {
+  if (!book.score_breakdown) return "";
+  const parts = [
+    ["内容", book.score_breakdown.content],
+    ["协同", book.score_breakdown.collaborative],
+    ["热度", book.score_breakdown.popularity],
+    ["新颖", book.score_breakdown.novelty],
+  ];
+  return `
+    <div class="recommendation-score-breakdown">
+      <strong>综合分 ${escapeHtml(book.ml_score ?? "-")}</strong>
+      ${parts.map(([label, value]) => `<span>${label} ${formatScore(value)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function formatScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0.00";
+  return number.toFixed(2);
+}
+
+function bookPublisherLine(book, keyword) {
+  const parts = [
+    book.publisher ? highlightText(book.publisher, keyword) : "",
+    book.publication_year ? escapeHtml(book.publication_year) : "",
+  ].filter(Boolean);
+  return parts.length ? `<div class="book-meta-line book-publisher-line">${parts.join(" · ")}</div>` : "";
+}
+
+function bookMetricGrid(book) {
+  const metrics = [
+    book.average_rating !== undefined && book.average_rating !== null ? metricItem("Rating", book.average_rating) : "",
+    book.ratings_count !== undefined && book.ratings_count !== null ? metricItem("Ratings", formatNumber(book.ratings_count)) : "",
+    book.num_pages !== undefined && book.num_pages !== null ? metricItem("Pages", formatNumber(book.num_pages)) : "",
+    metricItem("Shelf", `${escapeHtml(book.shelf_id)} · ${escapeHtml(book.shelf_slot)} · (${escapeHtml(book.row)}, ${escapeHtml(book.col)})`),
+  ].filter(Boolean);
+  return `<div class="book-metrics">${metrics.join("")}</div>`;
+}
+
+function metricItem(label, value) {
+  return `<span><strong>${escapeHtml(label)}</strong>${value}</span>`;
+}
+
+function genrePreview(value, keyword) {
+  const chips = genreChips(value, keyword, 5);
+  return chips ? `<div class="book-genre-preview">${chips}</div>` : "";
+}
+
+function genreChips(value, keyword, limit = 10) {
+  const items = String(value || "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  if (!items.length) return "";
+  return `<span class="dataset-chips">${items
+    .map((item) => `<span>${highlightText(item, keyword)}</span>`)
+    .join("")}</span>`;
+}
+
+function bookDetailsPanel(book, keyword, detailId) {
+  const rows = [
+    book.isbn ? detailRow("ISBN", highlightText(book.isbn, keyword)) : "",
+    book.isbn13 ? detailRow("ISBN13", highlightText(book.isbn13, keyword)) : "",
+    book.genres ? detailRow("Genres", highlightText(book.genres, keyword)) : "",
+    book.match_score ? detailRow("匹配度", escapeHtml(book.match_score)) : "",
+    book.reason ? detailRow("推荐原因", escapeHtml(book.reason)) : "",
+  ].filter(Boolean);
+  const preview = descriptionPreview(book.description, keyword);
+  if (preview) rows.push(detailRow("简介", preview));
+  return rows.length ? `<div class="book-card-details" id="${detailId}" hidden>${rows.join("")}</div>` : "";
+}
+
+function detailRow(label, value) {
+  return `<div class="book-detail-row"><strong>${escapeHtml(label)}</strong><span>${value}</span></div>`;
+}
+
+function descriptionPreview(description, keyword) {
+  const raw = cleanDescription(description);
+  if (!raw) return "";
+  const snippet = descriptionSnippet(raw, keyword);
+  if (snippet) return snippet;
+  const short = raw.length > 220 ? `${raw.slice(0, 220)}...` : raw;
+  return escapeHtml(short);
+}
+
+function cleanDescription(description) {
+  return String(description || "").split(/\n\s*\nPublisher:/)[0].trim();
+}
+
+function formatNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return escapeHtml(value);
+  return number.toLocaleString("en-US");
 }
 
 function escapeHtml(value) {
@@ -153,6 +262,24 @@ async function loadStats() {
   qs("#shelfCount").textContent = stats.shelves;
 }
 
+async function loadSearchFacets() {
+  state.searchFacets = await api("/api/books/search-facets");
+  populateSelect("#genreFilter", "All genres", state.searchFacets.genres || []);
+}
+
+function populateSelect(selector, label, values) {
+  const select = qs(selector);
+  const current = select.value;
+  select.innerHTML = `<option value="">${escapeHtml(label)}</option>`;
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (values.includes(current)) select.value = current;
+}
+
 async function loadMe() {
   if (!state.token) {
     qs("#userChip").textContent = "未登录";
@@ -172,12 +299,47 @@ async function searchBooks(options = {}) {
   const record = options.record !== false;
   const keyword = qs("#searchInput").value.trim();
   state.searchKeyword = keyword;
-  const books = await api(`/api/books/search?keyword=${encodeURIComponent(keyword)}&record=${record ? "1" : "0"}`);
+  const params = new URLSearchParams(searchFilterParams());
+  params.set("keyword", keyword);
+  params.set("record", record ? "1" : "0");
+  const books = await api(`/api/books/search?${params.toString()}`);
   const list = qs("#bookResults");
   list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword })));
+  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword, datasetMeta: true, collapsibleDetails: true })));
   qs("#resultCount").textContent = `${books.length} 本`;
   loadRecommendations();
+}
+
+function searchFilterParams() {
+  const pairs = {
+    genre: qs("#genreFilter").value,
+    publisher: qs("#publisherFilter").value.trim(),
+    yearFrom: nonDefaultFilterValue("#yearFromFilter"),
+    yearTo: nonDefaultFilterValue("#yearToFilter"),
+    minRating: nonDefaultFilterValue("#minRatingFilter"),
+    minRatingsCount: nonDefaultFilterValue("#minRatingsCountFilter"),
+  };
+  return Object.fromEntries(Object.entries(pairs).filter(([, value]) => value !== ""));
+}
+
+function nonDefaultFilterValue(selector) {
+  const input = qs(selector);
+  const value = input.value.trim();
+  return value === (input.dataset.defaultValue || "") ? "" : value;
+}
+
+function resetSearchFilters() {
+  ["#genreFilter"].forEach((selector) => {
+    qs(selector).value = "";
+  });
+  ["#publisherFilter"].forEach((selector) => {
+    qs(selector).value = "";
+  });
+  ["#yearFromFilter", "#yearToFilter", "#minRatingFilter", "#minRatingsCountFilter"].forEach((selector) => {
+    const input = qs(selector);
+    input.value = input.dataset.defaultValue || "";
+  });
+  searchBooks({ record: false });
 }
 
 async function loadRecommendations() {
@@ -185,16 +347,28 @@ async function loadRecommendations() {
   const list = qs("#recommendations");
   const profile = qs("#mlProfile");
   const keywords = data.profileKeywords || [];
+  const profileGenres = data.preferredGenres || [];
+  const modelWeights = data.modelWeights || {};
   profile.innerHTML = `
     <div class="ml-summary">${escapeHtml(data.summary || "")}</div>
+    <div class="ml-weights">
+      ${Object.entries(modelWeights).length
+        ? Object.entries(modelWeights).map(([key, value]) => `<span>${escapeHtml(key)} <strong>${Math.round(Number(value) * 100)}%</strong></span>`).join("")
+        : ""}
+    </div>
     <div class="ml-keywords">
       ${keywords.length
         ? keywords.map((item) => `<span>${escapeHtml(item.term)} <strong>${item.weight}</strong></span>`).join("")
         : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
     </div>
+    <div class="ml-keywords profile-genres">
+      ${profileGenres.length
+        ? profileGenres.map((item) => `<span>${escapeHtml(item.genre)} <strong>${item.weight}</strong></span>`).join("")
+        : ""}
+    </div>
   `;
   list.innerHTML = "";
-  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
+  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, recommendationMeta: true })));
 }
 
 async function toggleFavorite(bookId, isFavorite) {
@@ -1306,10 +1480,24 @@ function bindEvents() {
   qs("#searchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchBooks();
   });
+  qs("#resetSearchFilters").addEventListener("click", resetSearchFilters);
+  ["#genreFilter"].forEach((selector) => {
+    qs(selector).addEventListener("change", () => searchBooks());
+  });
+  ["#publisherFilter", "#yearFromFilter", "#yearToFilter", "#minRatingFilter", "#minRatingsCountFilter"].forEach((selector) => {
+    qs(selector).addEventListener("keydown", (event) => {
+      if (event.key === "Enter") searchBooks();
+    });
+  });
   document.body.addEventListener("click", (event) => {
     const toggle = event.target.closest("[data-fav-toggle]");
+    const detailsToggle = event.target.closest("[data-book-details-toggle]");
     const unfav = event.target.closest("[data-unfav]");
     const removePickup = event.target.closest("[data-remove-pickup]");
+    if (detailsToggle) {
+      toggleBookDetails(detailsToggle);
+      return;
+    }
     if (toggle) toggleFavorite(toggle.dataset.favToggle, toggle.dataset.favorite === "true");
     if (unfav) unfavoriteBook(unfav.dataset.unfav);
     if (removePickup) removePickupBook(removePickup.dataset.removePickup);
@@ -1412,6 +1600,15 @@ function bindEvents() {
   qs("#registerTab").addEventListener("click", () => switchAuth(true));
 }
 
+function toggleBookDetails(button) {
+  const panel = qs(`#${button.dataset.bookDetailsToggle}`);
+  if (!panel) return;
+  const expanded = button.getAttribute("aria-expanded") === "true";
+  panel.hidden = expanded;
+  button.setAttribute("aria-expanded", expanded ? "false" : "true");
+  button.textContent = expanded ? "详情 ▾" : "收起 ▴";
+}
+
 function togglePasswordVisibility(button) {
   const input = qs(`#${button.dataset.target}`);
   const showing = input.type === "text";
@@ -1439,6 +1636,7 @@ async function boot() {
   bindEvents();
   await loadStats();
   await loadMe();
+  await loadSearchFacets();
   await searchBooks({ record: false });
   await loadRecommendations();
   updateRouteProgress();

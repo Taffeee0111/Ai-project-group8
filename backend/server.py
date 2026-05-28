@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 import hmac
+import csv
 import json
 import math
 import os
@@ -23,6 +24,8 @@ DATA_DIR = PROJECT_ROOT / "backend" / "data"
 DB_PATH = DATA_DIR / "library.db"
 FRONTEND_DIR = PROJECT_ROOT / "frontend" / "static"
 BOOK_DOCX = DATA_DIR / "book_collection_filled_1500.docx"
+DATASET_DIR = DATA_DIR / "dataset"
+DATASET_BOOKS_CSV = DATASET_DIR / "books_10k.csv"
 
 TOKENS: dict[str, int] = {}
 AUTH_SECRET = "algorithm-ai-library-auth"
@@ -51,6 +54,37 @@ READING_AREAS = [
     (range(18, 20), range(16, 20)),
 ]
 DEFAULT_SEAT = (10, 10)
+HYBRID_WEIGHTS = {"content": 0.45, "collaborative": 0.3, "popularity": 0.2, "novelty": 0.05}
+BOOK_DATASET_COLUMNS = {
+    "work_id": "TEXT",
+    "original_title": "TEXT",
+    "author_ids": "TEXT",
+    "publisher": "TEXT",
+    "publication_year": "INTEGER",
+    "original_publication_year": "INTEGER",
+    "language_code": "TEXT",
+    "isbn": "TEXT",
+    "isbn13": "TEXT",
+    "format": "TEXT",
+    "num_pages": "INTEGER",
+    "estimated_word_count": "INTEGER",
+    "word_count_source": "TEXT",
+    "average_rating": "REAL",
+    "ratings_count": "INTEGER",
+    "text_reviews_count": "INTEGER",
+    "work_ratings_count": "INTEGER",
+    "work_text_reviews_count": "INTEGER",
+    "rating_5_count": "INTEGER",
+    "rating_4_count": "INTEGER",
+    "rating_3_count": "INTEGER",
+    "rating_2_count": "INTEGER",
+    "rating_1_count": "INTEGER",
+    "rating_total_count": "INTEGER",
+    "genres": "TEXT",
+    "top_shelves": "TEXT",
+    "url": "TEXT",
+    "image_url": "TEXT",
+}
 
 
 def connect() -> sqlite3.Connection:
@@ -113,6 +147,135 @@ def parse_docx_table(path: Path) -> list[dict[str, str]]:
             row += [""] * (len(header) - len(row))
         records.append(dict(zip(header, row)))
     return records
+
+
+def int_or_none(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def float_or_none(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def first_genre(genres: str) -> str:
+    for genre in (genres or "").split(";"):
+        genre = genre.strip()
+        if genre:
+            return genre
+    return "uncategorized"
+
+
+def dataset_book_record(row: dict[str, str], index: int, shelf_ids: list[str]) -> dict[str, Any]:
+    description = row.get("description") or ""
+    publisher = row.get("publisher") or ""
+    year = row.get("publication_year") or row.get("original_publication_year") or ""
+    rating = row.get("average_rating") or ""
+    ratings_count = row.get("ratings_count") or ""
+    url = row.get("url") or ""
+    meta_bits = []
+    if publisher:
+        meta_bits.append(f"Publisher: {publisher}")
+    if year:
+        meta_bits.append(f"Year: {year}")
+    if rating:
+        meta_bits.append(f"Average rating: {rating}")
+    if ratings_count:
+        meta_bits.append(f"Ratings count: {ratings_count}")
+    if url:
+        meta_bits.append(f"URL: {url}")
+    if meta_bits:
+        description = (description + "\n\n" if description else "") + "\n".join(meta_bits)
+
+    record = {
+        "book_id": str(row.get("book_id") or index),
+        "source_index": str(row.get("work_id") or index),
+        "title": row.get("title") or row.get("original_title") or f"Book {index}",
+        "author": row.get("authors") or "Unknown",
+        "pages": row.get("num_pages") or "",
+        "description": description,
+        "category": first_genre(row.get("genres") or ""),
+        "shelf_id": shelf_ids[(index - 1) % len(shelf_ids)],
+        "shelf_slot": ((index - 1) // len(shelf_ids)) + 1,
+        "status": "available",
+    }
+    record.update(dataset_metadata_record(row))
+    return record
+
+
+def dataset_metadata_record(row: dict[str, str]) -> dict[str, Any]:
+    return {
+        "work_id": row.get("work_id") or None,
+        "original_title": row.get("original_title") or None,
+        "author_ids": row.get("author_ids") or None,
+        "publisher": row.get("publisher") or None,
+        "publication_year": int_or_none(row.get("publication_year")),
+        "original_publication_year": int_or_none(row.get("original_publication_year")),
+        "language_code": row.get("language_code") or None,
+        "isbn": row.get("isbn") or None,
+        "isbn13": row.get("isbn13") or None,
+        "format": row.get("format") or None,
+        "num_pages": int_or_none(row.get("num_pages")),
+        "estimated_word_count": int_or_none(row.get("estimated_word_count")),
+        "word_count_source": row.get("word_count_source") or None,
+        "average_rating": float_or_none(row.get("average_rating")),
+        "ratings_count": int_or_none(row.get("ratings_count")),
+        "text_reviews_count": int_or_none(row.get("text_reviews_count")),
+        "work_ratings_count": int_or_none(row.get("work_ratings_count")),
+        "work_text_reviews_count": int_or_none(row.get("work_text_reviews_count")),
+        "rating_5_count": int_or_none(row.get("rating_5_count")),
+        "rating_4_count": int_or_none(row.get("rating_4_count")),
+        "rating_3_count": int_or_none(row.get("rating_3_count")),
+        "rating_2_count": int_or_none(row.get("rating_2_count")),
+        "rating_1_count": int_or_none(row.get("rating_1_count")),
+        "rating_total_count": int_or_none(row.get("rating_total_count")),
+        "genres": row.get("genres") or None,
+        "top_shelves": row.get("top_shelves") or None,
+        "url": row.get("url") or None,
+        "image_url": row.get("image_url") or None,
+    }
+
+
+def ensure_dataset_book_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
+    for name, column_type in BOOK_DATASET_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE books ADD COLUMN {name} {column_type}")
+
+
+def dataset_books_from_csv(shelf_ids: list[str]) -> list[dict[str, Any]]:
+    if not DATASET_BOOKS_CSV.exists():
+        return []
+    with DATASET_BOOKS_CSV.open(newline="", encoding="utf-8") as file:
+        return [dataset_book_record(row, index, shelf_ids) for index, row in enumerate(csv.DictReader(file), start=1)]
+
+
+def hydrate_dataset_book_metadata(conn: sqlite3.Connection) -> None:
+    if not DATASET_BOOKS_CSV.exists():
+        return
+    missing = conn.execute("SELECT COUNT(*) FROM books WHERE publisher IS NULL OR genres IS NULL OR isbn13 IS NULL").fetchone()[0]
+    if missing == 0:
+        return
+    columns = list(BOOK_DATASET_COLUMNS.keys())
+    assignments = ", ".join(f"{column}=:{column}" for column in columns)
+    with DATASET_BOOKS_CSV.open(newline="", encoding="utf-8") as file:
+        rows = []
+        for row in csv.DictReader(file):
+            item = {"book_id": str(row.get("book_id") or "")}
+            item.update(dataset_metadata_record(row))
+            rows.append(item)
+    conn.executemany(f"UPDATE books SET {assignments} WHERE book_id=:book_id", rows)
 
 
 def generate_shelves() -> list[tuple[str, int, int, str]]:
@@ -250,6 +413,7 @@ def init_db() -> None:
             );
             """
         )
+        ensure_dataset_book_columns(conn)
         shelves = generate_shelves()
         conn.executemany(
             """
@@ -269,15 +433,27 @@ def init_db() -> None:
         )
         book_count = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
         if book_count == 0:
-            records = parse_docx_table(BOOK_DOCX) if BOOK_DOCX.exists() else []
-            books = assign_books_to_shelves(records) if records else fallback_books()
-            conn.executemany(
-                """
-                INSERT INTO books(book_id,source_index,title,author,pages,description,category,shelf_id,shelf_slot,status)
-                VALUES(:book_id,:source_index,:title,:author,:pages,:description,:category,:shelf_id,:shelf_slot,:status)
-                """,
-                books,
-            )
+            books = dataset_books_from_csv(shelf_ids)
+            if books:
+                base_columns = ["book_id", "source_index", "title", "author", "pages", "description", "category", "shelf_id", "shelf_slot", "status"]
+                columns = base_columns + list(BOOK_DATASET_COLUMNS.keys())
+                conn.executemany(
+                    f"""
+                    INSERT INTO books({",".join(columns)})
+                    VALUES({",".join(":" + column for column in columns)})
+                    """,
+                    books,
+                )
+            else:
+                records = parse_docx_table(BOOK_DOCX) if BOOK_DOCX.exists() else []
+                books = assign_books_to_shelves(records) if records else fallback_books()
+                conn.executemany(
+                    """
+                    INSERT INTO books(book_id,source_index,title,author,pages,description,category,shelf_id,shelf_slot,status)
+                    VALUES(:book_id,:source_index,:title,:author,:pages,:description,:category,:shelf_id,:shelf_slot,:status)
+                    """,
+                    books,
+                )
         else:
             rows = conn.execute("SELECT id FROM books ORDER BY id").fetchall()
             conn.executemany(
@@ -287,6 +463,7 @@ def init_db() -> None:
                     for index, row in enumerate(rows, start=1)
                 ],
             )
+            hydrate_dataset_book_metadata(conn)
         user = conn.execute("SELECT id FROM users WHERE username='demo'").fetchone()
         if not user:
             conn.execute(
@@ -532,6 +709,55 @@ def normalize_method(value: Any) -> str:
     return method if method in {"greedy", "greedy_2opt", "state_astar", "branch_bound"} else "greedy"
 
 
+def split_terms(value: str | None) -> list[str]:
+    return [term.strip() for term in (value or "").split(";") if term.strip()]
+
+
+def split_shelf_terms(value: str | None) -> list[tuple[str, int]]:
+    terms = []
+    for item in split_terms(value):
+        name, _, count = item.partition(":")
+        terms.append((name.strip(), int_or_none(count) or 0))
+    return [(name, count) for name, count in terms if name]
+
+
+def search_facets(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    genre_counts: Counter[str] = Counter()
+    for row in conn.execute("SELECT genres FROM books").fetchall():
+        genre_counts.update(split_terms(row["genres"]))
+
+    def grouped_values(column: str, limit: int = 80) -> list[str]:
+        rows = conn.execute(
+            f"""
+            SELECT {column} value, COUNT(*) count
+            FROM books
+            WHERE {column} IS NOT NULL AND TRIM({column}) != ''
+            GROUP BY {column}
+            ORDER BY count DESC, value ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [row["value"] for row in rows]
+
+    return {
+        "genres": [name for name, _ in genre_counts.most_common(80)],
+        "publishers": grouped_values("publisher"),
+    }
+
+
+def query_float(query: dict[str, list[str]], key: str) -> float | None:
+    values = query.get(key, [""])
+    text = values[0].strip() if values else ""
+    return float_or_none(text)
+
+
+def query_int(query: dict[str, list[str]], key: str) -> int | None:
+    values = query.get(key, [""])
+    text = values[0].strip() if values else ""
+    return int_or_none(text)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
@@ -598,8 +824,73 @@ class Handler(BaseHTTPRequestHandler):
                 if user_id and keyword and should_record:
                     conn.execute("INSERT INTO search_history(user_id,keyword,created_at) VALUES(?,?,?)", (user_id, keyword, now()))
                 like = f"%{keyword}%"
-                rows = conn.execute(
+                clauses = [
                     """
+                    (
+                        ?='' OR
+                        b.title LIKE ? OR
+                        b.author LIKE ? OR
+                        b.category LIKE ? OR
+                        b.description LIKE ? OR
+                        COALESCE(b.publisher, '') LIKE ? OR
+                        COALESCE(b.isbn, '') LIKE ? OR
+                        COALESCE(b.isbn13, '') LIKE ? OR
+                        COALESCE(b.format, '') LIKE ? OR
+                        COALESCE(b.language_code, '') LIKE ? OR
+                        COALESCE(b.genres, '') LIKE ? OR
+                        COALESCE(b.top_shelves, '') LIKE ?
+                    )
+                    """
+                ]
+                params: list[Any] = [keyword, like, like, like, like, like, like, like, like, like, like, like]
+
+                genre = query.get("genre", [""])[0].strip()
+                if genre:
+                    clauses.append("COALESCE(b.genres, '') LIKE ?")
+                    params.append(f"%{genre}%")
+
+                shelf_tag = query.get("shelfTag", [""])[0].strip()
+                if shelf_tag:
+                    clauses.append("COALESCE(b.top_shelves, '') LIKE ?")
+                    params.append(f"%{shelf_tag}%")
+
+                publisher = query.get("publisher", [""])[0].strip()
+                if publisher:
+                    clauses.append("COALESCE(b.publisher, '') LIKE ?")
+                    params.append(f"%{publisher}%")
+
+                language = query.get("language", [""])[0].strip()
+                if language:
+                    clauses.append("b.language_code = ?")
+                    params.append(language)
+
+                book_format = query.get("format", [""])[0].strip()
+                if book_format:
+                    clauses.append("b.format = ?")
+                    params.append(book_format)
+
+                year_from = query_int(query, "yearFrom")
+                if year_from is not None:
+                    clauses.append("b.publication_year >= ?")
+                    params.append(year_from)
+
+                year_to = query_int(query, "yearTo")
+                if year_to is not None:
+                    clauses.append("b.publication_year <= ?")
+                    params.append(year_to)
+
+                min_rating = query_float(query, "minRating")
+                if min_rating is not None:
+                    clauses.append("b.average_rating >= ?")
+                    params.append(min_rating)
+
+                min_ratings_count = query_int(query, "minRatingsCount")
+                if min_ratings_count is not None:
+                    clauses.append("b.ratings_count >= ?")
+                    params.append(min_ratings_count)
+
+                rows = conn.execute(
+                    f"""
                     SELECT b.*, s.row, s.col,
                            CASE
                                WHEN ?='' THEN 0
@@ -607,16 +898,39 @@ class Handler(BaseHTTPRequestHandler):
                                    CASE WHEN b.title LIKE ? THEN 40 ELSE 0 END +
                                    CASE WHEN b.category LIKE ? THEN 30 ELSE 0 END +
                                    CASE WHEN b.author LIKE ? THEN 20 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.publisher, '') LIKE ? THEN 18 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.genres, '') LIKE ? THEN 16 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.top_shelves, '') LIKE ? THEN 14 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.isbn, '') LIKE ? OR COALESCE(b.isbn13, '') LIKE ? THEN 35 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.format, '') LIKE ? THEN 8 ELSE 0 END +
+                                   CASE WHEN COALESCE(b.language_code, '') LIKE ? THEN 8 ELSE 0 END +
                                    CASE WHEN b.description LIKE ? THEN 5 ELSE 0 END
                            END AS match_score
                     FROM books b JOIN shelves s ON b.shelf_id=s.id
-                    WHERE ?='' OR b.title LIKE ? OR b.author LIKE ? OR b.category LIKE ? OR b.description LIKE ?
+                    WHERE {" AND ".join(clauses)}
                     ORDER BY match_score DESC, b.id ASC
                     LIMIT 80
                     """,
-                    (keyword, like, like, like, like, keyword, like, like, like, like),
+                    (
+                        keyword,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        like,
+                        *params,
+                    ),
                 ).fetchall()
                 return json_response(self, 200, mark_favorites(conn, rows, user_id))
+
+            if path == "/api/books/search-facets":
+                return json_response(self, 200, search_facets(conn))
 
             if path == "/api/books/recommendations":
                 limit = int(query.get("limit", ["10"])[0])
@@ -766,9 +1080,19 @@ def favorite_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
 
 
 def book_text(row: sqlite3.Row | dict[str, Any]) -> str:
+    keys = (
+        "title",
+        "original_title",
+        "author",
+        "category",
+        "genres",
+        "top_shelves",
+        "publisher",
+        "description",
+    )
     return " ".join(
         str(row.get(key, "") if isinstance(row, dict) else row[key] or "")
-        for key in ("title", "author", "category", "description")
+        for key in keys
     )
 
 
@@ -838,6 +1162,20 @@ def user_interest_vector(
     return vector
 
 
+def preferred_genres(favorites: list[sqlite3.Row], history: list[sqlite3.Row], limit: int = 6) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter()
+    for row in favorites:
+        for genre in split_terms(row["genres"] if "genres" in row.keys() else row["category"]):
+            counts[genre] += 3
+        if row["category"]:
+            counts[row["category"]] += 2
+    for row in history:
+        keyword = row["keyword"].lower()
+        for token in tokenize(keyword):
+            counts[token] += 1
+    return [{"genre": genre, "weight": weight} for genre, weight in counts.most_common(limit)]
+
+
 def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | None, limit: int = 8) -> list[dict[str, Any]]:
     if not user_id:
         return []
@@ -845,7 +1183,7 @@ def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | Non
     favs = favorite_rows(conn, user_id)
     if not history and not favs:
         return []
-    rows = conn.execute("SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id LIMIT 1500").fetchall()
+    rows = conn.execute("SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id").fetchall()
     _, idf = tfidf_vectors(rows)
     profile = user_interest_vector(history, favs, idf)
     return [
@@ -863,70 +1201,196 @@ def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit: int) -> dict[str, Any]:
+    history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall() if user_id else []
+    favs = favorite_rows(conn, user_id) if user_id else []
     profile = recommendation_profile_keywords(conn, user_id)
     books = enrich_recommendation_scores(recommendations(conn, user_id, limit))
     return {
         "profileKeywords": profile,
-        "summary": "TF-IDF 用户画像 + cosine similarity 个性化推荐。",
+        "preferredGenres": preferred_genres(favs, history),
+        "modelWeights": HYBRID_WEIGHTS,
+        "summary": "Hybrid 推荐：内容画像 + Goodreads 交互协同 + 热门质量综合评分。",
         "books": books,
     }
+
+
+def candidate_book_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT b.*, s.row, s.col
+        FROM books b JOIN shelves s ON b.shelf_id=s.id
+        """
+    ).fetchall()
+
+
+def popularity_scores(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    rows = conn.execute(
+        """
+        SELECT
+            b.book_id,
+            COALESCE(b.average_rating, 0) average_rating,
+            COALESCE(b.ratings_count, 0) ratings_count,
+            COUNT(di.user_id_csv) interaction_count,
+            AVG(NULLIF(di.rating, 0)) interaction_rating
+        FROM books b
+        LEFT JOIN dataset_interactions di ON di.book_id=b.book_id
+        GROUP BY b.book_id
+        """
+    ).fetchall()
+    max_ratings = max((row["ratings_count"] for row in rows), default=1) or 1
+    max_interactions = max((row["interaction_count"] for row in rows), default=1) or 1
+    scores: dict[str, dict[str, float]] = {}
+    for row in rows:
+        rating_score = min(float(row["average_rating"] or 0) / 5.0, 1.0)
+        ratings_count_score = math.log1p(float(row["ratings_count"] or 0)) / math.log1p(float(max_ratings))
+        interaction_count_score = math.log1p(float(row["interaction_count"] or 0)) / math.log1p(float(max_interactions))
+        interaction_rating_score = min(float(row["interaction_rating"] or 0) / 5.0, 1.0)
+        score = rating_score * 0.35 + ratings_count_score * 0.3 + interaction_count_score * 0.2 + interaction_rating_score * 0.15
+        scores[row["book_id"]] = {
+            "score": round(score, 4),
+            "rating": round(rating_score, 4),
+            "ratings_count": round(ratings_count_score, 4),
+            "interaction_count": round(interaction_count_score, 4),
+            "interaction_rating": round(interaction_rating_score, 4),
+        }
+    return scores
+
+
+def collaborative_scores(conn: sqlite3.Connection, favorites: list[sqlite3.Row]) -> dict[str, float]:
+    favorite_book_ids = [str(row["book_id"]) for row in favorites if row["book_id"]]
+    if not favorite_book_ids:
+        return {}
+    placeholders = ",".join("?" for _ in favorite_book_ids)
+    similar_users = conn.execute(
+        f"""
+        SELECT user_id_csv,
+               SUM(CASE WHEN rating >= 4 THEN 3 ELSE 0 END + is_read + is_reviewed) affinity
+        FROM dataset_interactions
+        WHERE book_id IN ({placeholders})
+        GROUP BY user_id_csv
+        HAVING affinity > 0
+        ORDER BY affinity DESC
+        LIMIT 500
+        """,
+        favorite_book_ids,
+    ).fetchall()
+    if not similar_users:
+        return {}
+    user_ids = [row["user_id_csv"] for row in similar_users]
+    user_weights = {row["user_id_csv"]: float(row["affinity"] or 1) for row in similar_users}
+    user_placeholders = ",".join("?" for _ in user_ids)
+    fav_placeholders = ",".join("?" for _ in favorite_book_ids)
+    rows = conn.execute(
+        f"""
+        SELECT book_id, user_id_csv, rating, is_read, is_reviewed
+        FROM dataset_interactions
+        WHERE user_id_csv IN ({user_placeholders})
+          AND book_id NOT IN ({fav_placeholders})
+          AND (rating >= 4 OR is_read=1 OR is_reviewed=1)
+        """,
+        [*user_ids, *favorite_book_ids],
+    ).fetchall()
+    raw_scores: Counter[str] = Counter()
+    for row in rows:
+        interaction_strength = (float(row["rating"] or 0) / 5.0) + (0.25 if row["is_read"] else 0.0) + (0.2 if row["is_reviewed"] else 0.0)
+        raw_scores[str(row["book_id"])] += interaction_strength * user_weights.get(row["user_id_csv"], 1.0)
+    max_score = max(raw_scores.values(), default=0.0)
+    if max_score <= 0:
+        return {}
+    return {book_id: round(score / max_score, 4) for book_id, score in raw_scores.items()}
+
+
+def series_key(title: str | None) -> str:
+    text = re.sub(r"\([^)]*\)", "", title or "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def novelty_score(row: sqlite3.Row, favorites: list[sqlite3.Row]) -> float:
+    if not favorites:
+        return 1.0
+    current = series_key(row["title"])
+    if current and any(current == series_key(fav["title"]) for fav in favorites):
+        return 0.35
+    if row["author"] and any(row["author"] == fav["author"] for fav in favorites):
+        return 0.75
+    return 1.0
+
+
+def recommendation_reason(breakdown: dict[str, float], row: sqlite3.Row) -> str:
+    drivers = sorted(breakdown.items(), key=lambda item: item[1] * HYBRID_WEIGHTS.get(item[0], 0.0), reverse=True)
+    top = [name for name, value in drivers if value > 0][:2]
+    labels = {
+        "content": "用户画像相似",
+        "collaborative": "相似读者互动较强",
+        "popularity": "评分与热度较高",
+        "novelty": "保留一定新颖度",
+    }
+    if not top:
+        return f"综合推荐：{row['category'] or 'metadata'} 方向的候选书。"
+    return "综合推荐：" + "，".join(labels[name] for name in top) + "。"
 
 
 def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -> list[dict[str, Any]]:
     if not user_id:
         rows = conn.execute(
-            "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
+            """
+            SELECT b.*, s.row, s.col
+            FROM books b JOIN shelves s ON b.shelf_id=s.id
+            ORDER BY COALESCE(b.average_rating, 0) DESC, COALESCE(b.ratings_count, 0) DESC
+            LIMIT ?
+            """,
             (limit,),
         ).fetchall()
-        return [item | {"reason": "登录后可根据收藏和搜索历史生成推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "登录后可根据收藏和搜索历史生成画像推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
 
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
     favs = favorite_rows(conn, user_id)
 
-    rows = conn.execute(
-        """
-        SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id
-        LIMIT 1500
-        """,
-    ).fetchall()
-
+    rows = candidate_book_rows(conn)
     favorite_ids = {fav["id"] for fav in favs}
     candidate_rows = [row for row in rows if row["id"] not in favorite_ids]
+    popularity = popularity_scores(conn)
+    collaborative = collaborative_scores(conn, favs)
 
+    content_scores: dict[int, float] = {}
     if history or favs:
         all_vectors, idf = tfidf_vectors(rows)
         vector_by_id = {row["id"]: vector for row, vector in zip(rows, all_vectors)}
         profile = user_interest_vector(history, favs, idf)
-        scored = []
         for row in candidate_rows:
-            score = cosine_similarity(profile, vector_by_id.get(row["id"], {}))
-            if score > 0:
-                item = row_to_dict(row)
-                item["reason"] = f"TF-IDF 余弦相似度推荐：与搜索历史和收藏图书文本相似，相似度 {score:.3f}"
-                item["recommendation_method"] = "tfidf_cosine_similarity"
-                item["ml_score"] = round(score, 4)
-                item["is_favorite"] = False
-                scored.append((score, -row["id"], item))
-        if scored:
-            scored.sort(reverse=True)
-            return [item for _, _, item in scored[:limit]]
+            content_scores[row["id"]] = cosine_similarity(profile, vector_by_id.get(row["id"], {}))
 
-    preferred_categories = Counter(r["category"] for r in favs)
-    keywords = [r["keyword"] for r in history]
     scored = []
     for row in candidate_rows:
-        text = f"{row['title']} {row['author']} {row['category']} {row['description']}".lower()
-        score = preferred_categories[row["category"]] * 4
-        score += sum(2 for kw in keywords if kw.lower() in text)
+        book_id = str(row["book_id"])
+        breakdown = {
+            "content": round(content_scores.get(row["id"], 0.0), 4),
+            "collaborative": collaborative.get(book_id, 0.0),
+            "popularity": popularity.get(book_id, {}).get("score", 0.0),
+            "novelty": round(novelty_score(row, favs), 4),
+        }
+        score = sum(HYBRID_WEIGHTS[key] * breakdown[key] for key in HYBRID_WEIGHTS)
         if score > 0:
-            reason = f"规则兜底推荐：与你的搜索历史和{row['category']}类收藏相似"
-            scored.append((score, row["id"], row_to_dict(row) | {"reason": reason, "recommendation_method": "rule_based", "is_favorite": False}))
+            item = row_to_dict(row)
+            item["score_breakdown"] = breakdown
+            item["popularity_detail"] = popularity.get(book_id, {})
+            item["reason"] = recommendation_reason(breakdown, row)
+            item["recommendation_method"] = "hybrid_recommendation"
+            item["ml_score"] = round(score, 4)
+            item["is_favorite"] = False
+            scored.append((score, row["id"], item))
+
     if not scored:
         rows = conn.execute(
-            "SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id ORDER BY b.id LIMIT ?",
+            """
+            SELECT b.*, s.row, s.col
+            FROM books b JOIN shelves s ON b.shelf_id=s.id
+            ORDER BY COALESCE(b.average_rating, 0) DESC, COALESCE(b.ratings_count, 0) DESC
+            LIMIT ?
+            """,
             (limit,),
         ).fetchall()
-        return [item | {"reason": "暂无足够历史，显示馆藏推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
+        return [item | {"reason": "暂无足够历史，显示热门高评分馆藏", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
     scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
     return [item[2] for item in scored[:limit]]
 

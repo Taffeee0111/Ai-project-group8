@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 backend/data/*.log
+.DS_Store
+backend/data/library.db
