@@ -33,6 +33,8 @@ BOOK_VECTOR_CACHE: dict[str, Any] = {}
 POPULARITY_CACHE: dict[str, dict[str, float]] | None = None
 RECOMMENDATION_CACHE: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 RECOMMENDER_MODEL_CACHE: dict[str, Any] = {}
+PICKUP_PATH_CACHE: dict[tuple[str, tuple[int, int], tuple[int, int]], dict[str, Any]] = {}
+GRID_CACHE: list[list[int]] | None = None
 AUTH_SECRET = "algorithm-ai-library-auth"
 GRID_SIZE = 30
 ENTRANCE = (0, 0)
@@ -59,6 +61,7 @@ READING_AREAS = [
     (range(18, 20), range(16, 20)),
 ]
 DEFAULT_SEAT = (10, 10)
+DIRECTIONS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 BOOK_DATASET_COLUMNS = {
     "work_id": "TEXT",
     "original_title": "TEXT",
@@ -530,7 +533,7 @@ def get_user(handler: BaseHTTPRequestHandler) -> int | None:
     return None
 
 
-def grid() -> list[list[int]]:
+def build_grid() -> list[list[int]]:
     cells = [[CELL_EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
     for row in CROWDED_ROWS:
         for col in CROWDED_COLS:
@@ -541,6 +544,13 @@ def grid() -> list[list[int]]:
         cells[row][col] = CELL_SHELF
     cells[ENTRANCE[0]][ENTRANCE[1]] = CELL_ENTRANCE
     return cells
+
+
+def grid() -> list[list[int]]:
+    global GRID_CACHE
+    if GRID_CACHE is None:
+        GRID_CACHE = build_grid()
+    return GRID_CACHE
 
 
 def is_reading_cell(point: tuple[int, int]) -> bool:
@@ -732,7 +742,7 @@ def normalize_algorithm(value: Any) -> str:
 
 def normalize_method(value: Any) -> str:
     method = normalize_order_method(str(value or "greedy"))
-    return method if method in {"greedy", "greedy_2opt", "state_astar", "branch_bound"} else "greedy"
+    return method if method in {"greedy", "greedy_2opt"} else "greedy"
 
 
 def split_terms(value: str | None) -> list[str]:
@@ -1072,7 +1082,8 @@ class Handler(BaseHTTPRequestHandler):
                 method = normalize_method(data.get("method"))
                 book_ids = [int(x) for x in data.get("bookIds", [])]
                 end = parse_end_point(data.get("end"))
-                result = solve_pickup(conn, book_ids, algorithm, method, end)
+                constraints_enabled = bool(data.get("constraintsEnabled"))
+                result = solve_pickup(conn, book_ids, algorithm, method, end, constraints_enabled)
                 if "error" in result:
                     return json_response(self, 400, result)
                 return json_response(self, 200, result)
@@ -1294,7 +1305,7 @@ def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit
         "profileKeywords": profile,
         "preferredGenres": preferred_genres(favs, history),
         "modelStatus": public_model_status(status),
-        "summary": "机器学习推荐：离线 SVD 协同过滤模型 + 内容冷启动；模型不可用时使用热门高评分兜底。",
+        "summary": "",
         "books": books,
     }
 
@@ -1632,15 +1643,6 @@ def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[s
 def normalize_order_method(method: str) -> str:
     value = (method or "greedy").lower()
     aliases = {
-        "planning": "state_astar",
-        "state-space": "state_astar",
-        "state_space": "state_astar",
-        "state-space-astar": "state_astar",
-        "state_space_astar": "state_astar",
-        "csp": "branch_bound",
-        "branch-and-bound": "branch_bound",
-        "branch_and_bound": "branch_bound",
-        "bnb": "branch_bound",
         "two_opt": "greedy_2opt",
         "greedy_2_opt": "greedy_2opt",
         "greedy+2opt": "greedy_2opt",
@@ -1648,36 +1650,88 @@ def normalize_order_method(method: str) -> str:
     return aliases.get(value, value)
 
 
-def solve_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, method: str, end: tuple[int, int] = DEFAULT_SEAT) -> dict[str, Any]:
+def solve_pickup(
+    conn: sqlite3.Connection,
+    book_ids: list[int],
+    algorithm: str,
+    method: str,
+    end: tuple[int, int] = DEFAULT_SEAT,
+    constraints_enabled: bool = False,
+) -> dict[str, Any]:
+    total_started = time.perf_counter()
     algorithm = normalize_path_algorithm(algorithm)
     method = normalize_order_method(method)
-    if method == "greedy":
+    if method not in {"greedy", "greedy_2opt"}:
+        method = "greedy"
+    if method == "greedy" and not constraints_enabled:
         plan = plan_pickup(conn, book_ids, algorithm, end)
         plan["method"] = method
+        plan["constraintsEnabled"] = False
+        plan["cspRuntimeMs"] = None
+        plan["pathSearchRuntimeMs"] = plan.get("runtimeMs", 0.0)
         return plan
 
     targets = pickup_targets(conn, book_ids)
     if not targets:
-        return {"algorithm": algorithm, "method": method, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[ENTRANCE[0], ENTRANCE[1]]], "segments": [], "visitOrder": [], "unreachable": [], "end": list(end)}
+        return {"algorithm": algorithm, "method": method, "constraintsEnabled": constraints_enabled, "cspRuntimeMs": 0.0 if constraints_enabled else None, "pathSearchRuntimeMs": 0.0, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[ENTRANCE[0], ENTRANCE[1]]], "segments": [], "visitOrder": [], "unreachable": [], "end": list(end)}
 
-    if method in {"state_astar", "branch_bound"} and len(targets) > 10:
-        return {"error": "状态空间 A* / 分支限界目前仅支持最多 10 本书（组合空间过大），请减少选择或使用贪心类算法。"}
+    constraint_stats = None
+    csp_runtime_ms = 0.0
+    if constraints_enabled:
+        csp_started = time.perf_counter()
+        pre_context = build_pre_path_constraint_context(targets)
+        targets = pre_context["targets"]
+        constraint_stats = pre_context["stats"]
+        csp_runtime_ms += (time.perf_counter() - csp_started) * 1000
 
     started = time.perf_counter()
+    if constraints_enabled and method == "greedy":
+        path_cache = PathQueryCache(algorithm)
+        plan = plan_pickup_targets_greedy(targets, algorithm, end, path_cache=path_cache)
+        plan["method"] = method
+        plan["constraintsEnabled"] = True
+        plan["cspRuntimeMs"] = round(csp_runtime_ms, 3)
+        plan["pathSearchRuntimeMs"] = path_cache.stats()["pathSearchRuntimeMs"]
+        if constraint_stats is not None:
+            plan["constraintStats"] = pickup_constraint_stats(constraint_stats, path_cache, csp_runtime_ms, len(plan.get("unreachable", [])))
+        plan["runtimeMs"] = round((time.perf_counter() - total_started) * 1000, 3)
+        return plan
+
+    if constraints_enabled and method == "greedy_2opt":
+        path_cache = PathQueryCache(algorithm)
+        plan = plan_pickup_targets_greedy_two_opt(targets, algorithm, end, path_cache)
+        plan["method"] = method
+        plan["constraintsEnabled"] = True
+        plan["cspRuntimeMs"] = round(csp_runtime_ms, 3)
+        plan["pathSearchRuntimeMs"] = path_cache.stats()["pathSearchRuntimeMs"]
+        if constraint_stats is not None:
+            plan["constraintStats"] = pickup_constraint_stats(constraint_stats, path_cache, csp_runtime_ms, len(plan.get("unreachable", [])))
+        plan["runtimeMs"] = round((time.perf_counter() - total_started) * 1000, 3)
+        return plan
+
     points = compute_keypoints(targets, end)
     pair_results, pre_expanded, pre_runtime = precompute_paths(points, algorithm)
 
-    if method == "greedy_2opt":
+    if method == "greedy":
+        order, solver_expanded = greedy_pickup_order(pair_results, len(targets))
+    elif method == "greedy_2opt":
         order, solver_expanded = greedy_two_opt_pickup_order(pair_results, len(targets))
-    elif method == "state_astar":
-        order, solver_expanded = state_space_astar_pickup_order(pair_results, len(targets))
-    elif method == "branch_bound":
-        order, solver_expanded = branch_bound_pickup_order(pair_results, len(targets))
     else:
-        return {"error": f"Unknown method: {method}"}
+        method = "greedy"
+        order, solver_expanded = greedy_pickup_order(pair_results, len(targets))
 
     plan = plan_pickup_with_order(targets, order, algorithm, pair_results, end)
     plan["method"] = method
+    plan["constraintsEnabled"] = constraints_enabled
+    plan["cspRuntimeMs"] = round(csp_runtime_ms, 3) if constraints_enabled else None
+    plan["pathSearchRuntimeMs"] = round(pre_runtime, 3)
+    if constraint_stats is not None:
+        constraint_stats = constraint_stats | {
+            "cspRuntimeMs": round(csp_runtime_ms, 3),
+            "pathSearchRuntimeMs": round(pre_runtime, 3),
+        }
+        plan["constraintStats"] = constraint_stats
+        plan["unreachable"] = plan.get("unreachable", [])
     plan["solverExpanded"] = solver_expanded
     plan["pathExpanded"] = pre_expanded
     plan["precomputeExpanded"] = pre_expanded
@@ -1736,6 +1790,210 @@ def route_order_cost(
     return total + int(final_distance)
 
 
+def manhattan(a: tuple[int, int], b: tuple[int, int]) -> int:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+class PathQueryCache:
+    def __init__(self, algorithm: str) -> None:
+        self.algorithm = algorithm
+        self._cache: dict[tuple[tuple[int, int], tuple[int, int]], dict[str, Any]] = {}
+        self.queries = 0
+        self.hits = 0
+        self.path_runtime_ms = 0.0
+
+    def get(self, start: tuple[int, int], target: tuple[int, int]) -> dict[str, Any]:
+        key = (start, target)
+        cached = self._cache.get(key)
+        if cached is not None:
+            self.hits += 1
+            return cached
+        global_key = (self.algorithm, start, target)
+        global_cached = PICKUP_PATH_CACHE.get(global_key)
+        if global_cached is not None:
+            self.hits += 1
+            self._cache[key] = global_cached
+            return global_cached
+        self.queries += 1
+        result = search_path(start, target, self.algorithm)
+        self.path_runtime_ms += float(result.get("runtimeMs") or 0.0)
+        self._cache[key] = result
+        PICKUP_PATH_CACHE[global_key] = result
+        return result
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "cacheHits": self.hits,
+            "pathQueriesAvoided": self.hits,
+            "pathQueriesExecuted": self.queries,
+            "pathSearchRuntimeMs": round(self.path_runtime_ms, 3),
+        }
+
+
+def pickup_constraint_stats(
+    base_stats: dict[str, Any],
+    path_cache: PathQueryCache,
+    csp_runtime_ms: float,
+    unreachable_targets: int = 0,
+) -> dict[str, Any]:
+    return base_stats | path_cache.stats() | {
+        "unreachableTargets": unreachable_targets,
+        "cspRuntimeMs": round(csp_runtime_ms, 3),
+    }
+
+
+def plan_pickup_targets_greedy(
+    targets: list[dict[str, Any]],
+    algorithm: str,
+    end: tuple[int, int] = DEFAULT_SEAT,
+    path_cache: PathQueryCache | None = None,
+) -> dict[str, Any]:
+    current = ENTRANCE
+    current_idx = 0
+    remaining = set(range(1, len(targets) + 1))
+    pair_results: dict[tuple[int, int], dict[str, Any]] = {}
+    order: list[int] = []
+    solver_expanded = 0
+
+    while remaining:
+        best = None
+        for target_idx in sorted(remaining):
+            solver_expanded += 1
+            pickup = tuple(targets[target_idx - 1]["pickup"])
+            result = path_cache.get(current, pickup) if path_cache else search_path(current, pickup, algorithm)
+            pair_results[(current_idx, target_idx)] = result
+            if result["distance"] is not None and (best is None or result["distance"] < best[0]["distance"]):
+                best = (result, target_idx)
+        if best is None:
+            break
+        _, next_idx = best
+        order.append(next_idx)
+        remaining.remove(next_idx)
+        current_idx = next_idx
+        current = tuple(targets[next_idx - 1]["pickup"])
+
+    exit_idx = len(targets) + 1
+    pair_results[(current_idx, exit_idx)] = path_cache.get(current, end) if path_cache else search_path(current, end, algorithm)
+    plan = plan_pickup_with_order(targets, order, algorithm, pair_results, end)
+    plan["solverExpanded"] = solver_expanded
+    plan["pathExpanded"] = plan["expanded"]
+    plan["precomputeExpanded"] = 0
+    plan["precomputeRuntimeMs"] = 0.0
+    plan["unreachable"] = [targets[idx - 1] for idx in sorted(remaining)]
+    return plan
+
+
+def lazy_segment(
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+    targets: list[dict[str, Any]],
+    src_idx: int,
+    dst_idx: int,
+    end: tuple[int, int],
+    path_cache: PathQueryCache,
+) -> dict[str, Any]:
+    segment = pair_results.get((src_idx, dst_idx))
+    if segment is not None:
+        return segment
+
+    def point(idx: int) -> tuple[int, int]:
+        if idx == 0:
+            return ENTRANCE
+        if idx == len(targets) + 1:
+            return end
+        return tuple(targets[idx - 1]["pickup"])
+
+    segment = path_cache.get(point(src_idx), point(dst_idx))
+    pair_results[(src_idx, dst_idx)] = segment
+    return segment
+
+
+def route_order_cost_lazy(
+    pair_results: dict[tuple[int, int], dict[str, Any]],
+    targets: list[dict[str, Any]],
+    order: list[int],
+    end: tuple[int, int],
+    path_cache: PathQueryCache,
+) -> int | None:
+    current_idx = 0
+    total = 0
+    for target_idx in order:
+        distance = lazy_segment(pair_results, targets, current_idx, target_idx, end, path_cache).get("distance")
+        if distance is None:
+            return None
+        total += int(distance)
+        current_idx = target_idx
+    final_distance = lazy_segment(pair_results, targets, current_idx, len(targets) + 1, end, path_cache).get("distance")
+    if final_distance is None:
+        return None
+    return total + int(final_distance)
+
+
+def greedy_pickup_order_lazy(
+    targets: list[dict[str, Any]],
+    end: tuple[int, int],
+    path_cache: PathQueryCache,
+) -> tuple[list[int], int, dict[tuple[int, int], dict[str, Any]], set[int]]:
+    current_idx = 0
+    remaining = set(range(1, len(targets) + 1))
+    pair_results: dict[tuple[int, int], dict[str, Any]] = {}
+    order: list[int] = []
+    solver_expanded = 0
+
+    while remaining:
+        best = None
+        for target_idx in sorted(remaining):
+            solver_expanded += 1
+            result = lazy_segment(pair_results, targets, current_idx, target_idx, end, path_cache)
+            if result["distance"] is not None and (best is None or result["distance"] < best[0]["distance"]):
+                best = (result, target_idx)
+        if best is None:
+            break
+        _, next_idx = best
+        order.append(next_idx)
+        remaining.remove(next_idx)
+        current_idx = next_idx
+
+    lazy_segment(pair_results, targets, current_idx, len(targets) + 1, end, path_cache)
+    return order, solver_expanded, pair_results, remaining
+
+
+def plan_pickup_targets_greedy_two_opt(
+    targets: list[dict[str, Any]],
+    algorithm: str,
+    end: tuple[int, int],
+    path_cache: PathQueryCache,
+) -> dict[str, Any]:
+    order, solver_expanded, pair_results, remaining = greedy_pickup_order_lazy(targets, end, path_cache)
+    if len(order) >= 3:
+        best_cost = route_order_cost_lazy(pair_results, targets, order, end, path_cache)
+        improved = best_cost is not None
+        while improved:
+            improved = False
+            for i in range(len(order) - 1):
+                for j in range(i + 2, len(order) + 1):
+                    if i == 0 and j == len(order):
+                        continue
+                    solver_expanded += 1
+                    candidate = order[:i] + list(reversed(order[i:j])) + order[j:]
+                    candidate_cost = route_order_cost_lazy(pair_results, targets, candidate, end, path_cache)
+                    if candidate_cost is not None and best_cost is not None and candidate_cost < best_cost:
+                        order = candidate
+                        best_cost = candidate_cost
+                        improved = True
+                        break
+                if improved:
+                    break
+
+    route_order_cost_lazy(pair_results, targets, order, end, path_cache)
+    plan = plan_pickup_with_order(targets, order, algorithm, pair_results, end)
+    plan["solverExpanded"] = solver_expanded
+    plan["pathExpanded"] = plan["expanded"]
+    plan["precomputeExpanded"] = 0
+    plan["precomputeRuntimeMs"] = 0.0
+    plan["unreachable"] = [targets[idx - 1] for idx in sorted(remaining)]
+    return plan
+
+
 def greedy_pickup_order(
     pair_results: dict[tuple[int, int], dict[str, Any]],
     target_count: int,
@@ -1746,7 +2004,7 @@ def greedy_pickup_order(
     solver_expanded = 0
     while remaining:
         candidates = []
-        for target_idx in remaining:
+        for target_idx in sorted(remaining):
             solver_expanded += 1
             distance = best_segment(pair_results, current_idx, target_idx).get("distance")
             if distance is not None:
@@ -1792,151 +2050,59 @@ def greedy_two_opt_pickup_order(
     return order, solver_expanded
 
 
-def branch_bound_pickup_order(
-    pair_results: dict[tuple[int, int], dict[str, Any]],
-    target_count: int,
-) -> tuple[list[int], int]:
-    # Branch-and-bound view:
-    # - Variables: order position k in [0..n-1]
-    # - Domain: targets {1..n}
-    # - Constraints: all-different
-    # - Objective: minimize sum(dist(prev, next)) + dist(last, exit)
-    #
-    # We solve via backtracking + branch-and-bound.
-    solver_expanded = 0
-    targets = list(range(1, target_count + 1))
-
-    dist: dict[tuple[int, int], int] = {}
-    for i in range(0, target_count + 2):
-        for j in range(0, target_count + 2):
-            if i == j:
-                continue
-            d = best_segment(pair_results, i, j).get("distance")
-            if d is not None:
-                dist[(i, j)] = int(d)
-
-    exit_idx = target_count + 1
-    min_out: dict[int, int] = {}
-    for i in range(0, target_count + 1):  # exclude exit itself
-        candidates = []
-        for j in range(1, target_count + 1):
-            if i != j and (i, j) in dist:
-                candidates.append(dist[(i, j)])
-        if (i, exit_idx) in dist:
-            candidates.append(dist[(i, exit_idx)])
-        min_out[i] = min(candidates) if candidates else 10**9
-
-    best_cost = 10**18
-    best_order: list[int] = []
-
-    def lower_bound(current_idx: int, remaining: list[int]) -> int:
-        if not remaining:
-            return dist.get((current_idx, exit_idx), 10**9)
-        lb = min(dist.get((current_idx, t), 10**9) for t in remaining)
-        lb += sum(min_out.get(t, 10**9) for t in remaining)
-        return lb
-
-    def backtrack(current_idx: int, remaining: list[int], cost_so_far: int, order: list[int]) -> None:
-        nonlocal best_cost, best_order, solver_expanded
-        solver_expanded += 1
-        if cost_so_far >= best_cost:
-            return
-        if cost_so_far + lower_bound(current_idx, remaining) >= best_cost:
-            return
-        if not remaining:
-            final_leg = dist.get((current_idx, exit_idx))
-            if final_leg is None:
-                return
-            total = cost_so_far + final_leg
-            if total < best_cost:
-                best_cost = total
-                best_order = order[:]
-            return
-
-        remaining_sorted = sorted(remaining, key=lambda t: dist.get((current_idx, t), 10**9))
-        for t in remaining_sorted:
-            step = dist.get((current_idx, t))
-            if step is None:
-                continue
-            nxt_remaining = [x for x in remaining if x != t]
-            order.append(t)
-            backtrack(t, nxt_remaining, cost_so_far + step, order)
-            order.pop()
-
-    backtrack(0, targets, 0, [])
-    return best_order, solver_expanded
+def directed_path_query_count(target_count: int) -> int:
+    point_count = target_count + 2
+    return point_count * (point_count - 1)
 
 
-def state_space_astar_pickup_order(
-    pair_results: dict[tuple[int, int], dict[str, Any]],
-    target_count: int,
-) -> tuple[list[int], int]:
-    # State-space A* view:
-    # - State: (at_index, visited_mask)
-    # - Actions: pick(target_i) moves to i, cost = dist(at, i)
-    # - Goal: all targets visited, then go to exit (handled after reconstruction)
-    #
-    # We solve with A* on this explicit state space.
-    solver_expanded = 0
-    exit_idx = target_count + 1
+def expanded_books(target: dict[str, Any]) -> list[dict[str, Any]]:
+    return target.get("books") or [target]
 
-    dist: dict[tuple[int, int], int] = {}
-    for i in range(0, target_count + 2):
-        for j in range(0, target_count + 2):
-            if i == j:
-                continue
-            d = best_segment(pair_results, i, j).get("distance")
-            if d is not None:
-                dist[(i, j)] = int(d)
 
-    all_mask = (1 << target_count) - 1
+def build_pickup_groups(targets: list[dict[str, Any]]) -> dict[str, Any]:
+    original_count = len(targets)
+    groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for target in targets:
+        pickup = tuple(target["pickup"])
+        groups.setdefault(pickup, []).append(target)
 
-    def h(at_idx: int, mask: int) -> int:
-        if mask == all_mask:
-            return dist.get((at_idx, exit_idx), 0)
-        candidates = []
-        for t in range(1, target_count + 1):
-            bit = 1 << (t - 1)
-            if (mask & bit) == 0:
-                candidates.append(dist.get((at_idx, t), 10**9))
-        return min(candidates) if candidates else 0
+    reduced_targets: list[dict[str, Any]] = []
+    for pickup, books in sorted(groups.items(), key=lambda item: (item[0][0], item[0][1], min(int(book["id"]) for book in item[1]))):
+        ordered_books = sorted(books, key=lambda book: int(book["id"]))
+        first = ordered_books[0]
+        reason = "same_pickup" if len(ordered_books) > 1 else "single_pickup"
+        reduced_targets.append(
+            first
+            | {
+                "pickup": [pickup[0], pickup[1]],
+                "books": ordered_books,
+                "pickupCandidates": [[pickup[0], pickup[1]]],
+                "groupKey": f"pickup:{pickup[0]}:{pickup[1]}",
+                "constraintReason": reason,
+            }
+        )
 
-    start = (0, 0)
-    heap: list[tuple[int, int, tuple[int, int]]] = [(h(*start), 0, start)]
-    best_g: dict[tuple[int, int], int] = {start: 0}
-    came_from: dict[tuple[int, int], tuple[tuple[int, int], int] | None] = {start: None}
+    reduced_count = len(reduced_targets)
+    original_queries = directed_path_query_count(original_count)
+    reduced_queries = directed_path_query_count(reduced_count)
+    batch_groups = sum(1 for target in reduced_targets if len(target.get("books") or []) > 1)
+    return {
+        "targets": reduced_targets,
+        "stats": {
+            "originalTargets": original_count,
+            "reducedTargets": reduced_count,
+            "mergedBooks": original_count - reduced_count,
+            "pickupGroups": reduced_count,
+            "batchGroups": batch_groups,
+            "pathQueriesOriginal": original_queries,
+            "pathQueriesBaseline": reduced_queries,
+            "pathQueriesSaved": original_queries - reduced_queries,
+        },
+    }
 
-    while heap:
-        _, g, state = heapq.heappop(heap)
-        if g != best_g.get(state, 10**18):
-            continue
-        solver_expanded += 1
-        at_idx, mask = state
-        if mask == all_mask:
-            order: list[int] = []
-            cur = state
-            while came_from[cur] is not None:
-                prev, action_target = came_from[cur]
-                order.append(action_target)
-                cur = prev
-            order.reverse()
-            return order, solver_expanded
 
-        for t in range(1, target_count + 1):
-            bit = 1 << (t - 1)
-            if mask & bit:
-                continue
-            step = dist.get((at_idx, t))
-            if step is None:
-                continue
-            nxt = (t, mask | bit)
-            ng = g + step
-            if ng < best_g.get(nxt, 10**18):
-                best_g[nxt] = ng
-                came_from[nxt] = (state, t)
-                heapq.heappush(heap, (ng + h(*nxt), ng, nxt))
-
-    return [], solver_expanded
+def build_pre_path_constraint_context(targets: list[dict[str, Any]]) -> dict[str, Any]:
+    return build_pickup_groups(targets)
 
 
 def plan_pickup_with_order(
@@ -1957,6 +2123,7 @@ def plan_pickup_with_order(
 
     for t_idx in order:
         target = targets[t_idx - 1]
+        books = target.get("books") or [target]
         seg = best_segment(pair_results, current_idx, t_idx)
         if seg.get("distance") is None:
             continue
@@ -1964,28 +2131,30 @@ def plan_pickup_with_order(
         total_distance += int(seg["distance"])
         total_expanded += int(seg.get("expanded") or 0)
         total_runtime += float(seg.get("runtimeMs") or 0.0)
-        visit_order.append(target)
+        visit_order.extend(books)
         side = pickup_side(target["row"], target["col"], tuple(target["pickup"]))
-        segments.append(
-            {
+        for book_idx, book in enumerate(books):
+            first_book_at_stop = book_idx == 0
+            segments.append(
+                {
                 "type": "book",
                 "from": previous_label,
-                "to": target["shelf_id"],
-                "bookId": target["id"],
-                "bookCode": target["book_id"],
-                "bookTitle": target["title"],
-                "shelfId": target["shelf_id"],
-                "shelfPosition": [target["row"], target["col"]],
+                "to": book["shelf_id"],
+                "bookId": book["id"],
+                "bookCode": book["book_id"],
+                "bookTitle": book["title"],
+                "shelfId": book["shelf_id"],
+                "shelfPosition": [book["row"], book["col"]],
                 "pickup": target["pickup"],
                 "pickupSide": side,
-                "distance": int(seg["distance"]),
-                "expanded": int(seg.get("expanded") or 0),
-                "runtimeMs": float(seg.get("runtimeMs") or 0.0),
-                "path": seg["path"],
-                "instructions": movement_instructions(seg["path"]),
-                "summary": f"从{previous_label}出发，到达 {target['shelf_id']} {side}，取《{target['title']}》。",
+                "distance": int(seg["distance"]) if first_book_at_stop else 0,
+                "expanded": int(seg.get("expanded") or 0) if first_book_at_stop else 0,
+                "runtimeMs": float(seg.get("runtimeMs") or 0.0) if first_book_at_stop else 0.0,
+                "path": seg["path"] if first_book_at_stop else [target["pickup"]],
+                "instructions": movement_instructions(seg["path"]) if first_book_at_stop else [],
+                "summary": f"从{previous_label}出发，到达 {book['shelf_id']} {side}，取《{book['title']}》。" if first_book_at_stop else f"在同一取书点继续取《{book['title']}》。",
             }
-        )
+            )
         current_idx = t_idx
         previous_label = target["shelf_id"]
 

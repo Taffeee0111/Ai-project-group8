@@ -65,7 +65,7 @@ class MlRecommendationTest(unittest.TestCase):
 
         analysis = server.recommendation_analysis(self.conn, self.user_id, 5)
 
-        self.assertIn("机器学习", analysis["summary"])
+        self.assertEqual("", analysis["summary"])
         self.assertIn("modelStatus", analysis)
         self.assertIn("available", analysis["modelStatus"])
         self.assertNotIn("modelWeights", analysis)

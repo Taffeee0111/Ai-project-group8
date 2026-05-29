@@ -118,16 +118,20 @@
         </section>
 
         <section class="page" id="pickupPage">
-          <div class="pickup-layout">
-            <section class="pickup-panel">
+          <div class="pickup-workbench" data-mobile-view="map">
+            <section class="pickup-panel workbench-sidebar" data-workbench-panel="tasks">
               <div class="section-title route-control-title">
                 <h2>路线控制</h2>
               </div>
               <div class="route-controls" id="routePlaybackControls">
                 <button class="primary" id="planButton">生成路径</button>
-                <button class="play-toggle-button" id="playRouteButton" disabled title="播放 / 暂停" aria-label="播放 / 暂停">
-                  ▶
-                </button>
+                <div class="route-control-actions">
+                  <button class="route-control-button route-nav-button" id="previousRouteStep" title="上一步" aria-label="上一步">&lt;&lt;</button>
+                  <button class="route-control-button play-toggle-button" id="playRouteButton" disabled title="播放 / 暂停" aria-label="播放 / 暂停">
+                    ▶
+                  </button>
+                  <button class="route-control-button route-nav-button" id="nextRouteStep" title="下一步" aria-label="下一步">&gt;&gt;</button>
+                </div>
               </div>
               <div class="section-title">
                 <h2>本次取书</h2>
@@ -143,105 +147,120 @@
                 <button id="openSearchPickerButton">搜索想看的书</button>
               </div>
               <div class="status-note" id="selectedSeatInfo">终点座位：无</div>
-              <div class="section-title route-steps-title">
-                <h2>取书步骤</h2>
-                <div class="route-step-actions">
-                  <span id="routeStepCount">0 步</span>
-                  <button class="route-nav-button" id="previousRouteStep" title="上一步" aria-label="上一步">←</button>
-                  <button class="route-nav-button" id="nextRouteStep" title="下一步" aria-label="下一步">→</button>
-                </div>
-              </div>
-              <div class="route-steps" id="routeSteps"></div>
             </section>
-            <section class="map-panel">
-              <div class="section-title">
-                <h2>30 × 30 图书馆地图</h2>
-              </div>
-              <div class="legend">
-                <div class="legend-items">
-                  <span><i class="cell entrance"></i>入口</span>
-                  <span><i class="cell reading"></i>阅读区</span>
-                  <span><i class="cell crowded"></i>拥堵区</span>
-                  <span><i class="cell shelf"></i>书架</span>
-                  <span><i class="cell target"></i>目标</span>
-                  <span><i class="cell seat"></i>座位</span>
-                  <span>
-                    <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
-                      <path d="M2 7 H22" />
-                      <path d="M18 3 L26 7 L18 11 Z" />
-                    </svg>
-                    路线
-                  </span>
+            <section class="map-workspace">
+              <div class="map-panel">
+                <div class="map-stage">
+                  <div class="legend map-legend-overlay">
+                    <div class="legend-items">
+                      <span><i class="cell entrance"></i>入口</span>
+                      <span><i class="cell reading"></i>阅读区</span>
+                      <span><i class="cell crowded"></i>拥堵区</span>
+                      <span><i class="cell shelf"></i>书架</span>
+                      <span><i class="cell target"></i>目标</span>
+                      <span><i class="cell seat"></i>座位</span>
+                      <span>
+                        <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
+                          <path d="M2 7 H22" />
+                          <path d="M18 3 L26 7 L18 11 Z" />
+                        </svg>
+                        路线
+                      </span>
+                    </div>
+                    <span id="mapShelfCount">书架布局</span>
+                  </div>
+                  <div class="map-canvas">
+                    <button class="map-expand-button" id="openMapModal" type="button" data-tool-action="expand-map" aria-label="放大地图" title="放大地图">⛶</button>
+                    <div id="libraryGrid" class="library-grid"></div>
+                  </div>
                 </div>
-                <span id="mapShelfCount">书架布局</span>
               </div>
-              <div class="map-canvas">
-                <button class="map-expand-button" id="openMapModal" title="放大地图" aria-label="放大地图">⛶</button>
-                <div id="libraryGrid" class="library-grid"></div>
+              <div class="floating-tools">
+                <section class="algorithm-card algorithm-choice-card floating-tool-panel collapsed" id="algorithmTools">
+                  <div class="section-title tool-panel-title">
+                    <h2>算法选择</h2>
+                  </div>
+                  <div class="tool-panel-body">
+                    <div class="algorithm-choice">
+                      <div class="algorithm-label-row">
+                        <label class="top-label" for="algorithmSelect">两点路径算法</label>
+                        <button class="hint-button" type="button" aria-label="两点路径算法说明">
+                          i
+                          <span class="hint-popover">用于计算入口、书架取书点和座位之间的最短路径。</span>
+                        </button>
+                      </div>
+                      <select id="algorithmSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
+                        <option value="" selected>请选择两点路径算法</option>
+                        <option value="bfs">BFS</option>
+                        <option value="ucs">Uniform Cost Search</option>
+                        <option value="astar_manhattan">A* 曼哈顿</option>
+                        <option value="astar_euclidean">A* 欧几里得</option>
+                      </select>
+                      <div class="algorithm-options" data-algorithm-group="algorithmSelect">
+                        <button type="button" class="algorithm-option" data-value="bfs"><span></span>BFS</button>
+                        <button type="button" class="algorithm-option" data-value="ucs"><span></span>Uniform Cost Search</button>
+                        <button type="button" class="algorithm-option" data-value="astar_manhattan"><span></span>A* 曼哈顿</button>
+                        <button type="button" class="algorithm-option" data-value="astar_euclidean"><span></span>A* 欧几里得</button>
+                      </div>
+                    </div>
+                    <div class="algorithm-choice">
+                      <div class="algorithm-label-row">
+                        <label class="top-label" for="solverSelect">整体取书算法</label>
+                        <button class="hint-button" type="button" aria-label="整体取书算法说明">
+                          i
+                          <span class="hint-popover">用于决定多本书的访问顺序，降低本次取书总代价。</span>
+                        </button>
+                      </div>
+                      <select id="solverSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
+                        <option value="" selected>请选择整体取书算法</option>
+                        <option value="greedy">贪心最近邻（Greedy）</option>
+                        <option value="greedy_2opt">贪心 + 2-opt 优化</option>
+                      </select>
+                      <div class="algorithm-options" data-algorithm-group="solverSelect">
+                        <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
+                        <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
+                      </div>
+                    </div>
+                    <label class="constraint-toggle">
+                      <input id="constraintsToggle" type="checkbox" />
+                      <span>启用 CSP 约束传播</span>
+                    </label>
+                  </div>
+                </section>
+                <section class="algorithm-card route-steps-card floating-tool-panel" id="routeStepsTools">
+                  <div class="section-title tool-panel-title">
+                    <h2>取书步骤</h2>
+                    <span id="routeStepCount">0 步</span>
+                  </div>
+                  <div class="tool-panel-body">
+                    <div class="route-steps" id="routeSteps"></div>
+                  </div>
+                </section>
+                <section class="algorithm-card algorithm-analysis-card floating-tool-panel collapsed" id="metricsTools">
+                  <div class="section-title tool-panel-title">
+                    <h2>算法指标</h2>
+                  </div>
+                  <div class="tool-panel-body">
+                    <div class="metrics analysis-empty" id="pathMetrics">
+                      <strong>等待生成路径</strong>
+                    </div>
+                  </div>
+                </section>
               </div>
             </section>
-            <section class="algorithm-panel">
-              <section class="algorithm-card algorithm-choice-card">
-                <div class="section-title">
-                  <h2>算法选择</h2>
-                </div>
-                <div class="algorithm-choice">
-                  <div class="algorithm-label-row">
-                    <label class="top-label" for="algorithmSelect">两点路径算法</label>
-                    <button class="hint-button" type="button" aria-label="两点路径算法说明">
-                      i
-                      <span class="hint-popover">用于计算入口、书架取书点和座位之间的最短路径。</span>
-                    </button>
-                  </div>
-                  <select id="algorithmSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                    <option value="" selected>请选择两点路径算法</option>
-                    <option value="bfs">BFS</option>
-                    <option value="ucs">Uniform Cost Search</option>
-                    <option value="astar_manhattan">A* 曼哈顿</option>
-                    <option value="astar_euclidean">A* 欧几里得</option>
-                  </select>
-                  <div class="algorithm-options" data-algorithm-group="algorithmSelect">
-                    <button type="button" class="algorithm-option" data-value="bfs"><span></span>BFS</button>
-                    <button type="button" class="algorithm-option" data-value="ucs"><span></span>Uniform Cost Search</button>
-                    <button type="button" class="algorithm-option" data-value="astar_manhattan"><span></span>A* 曼哈顿</button>
-                    <button type="button" class="algorithm-option" data-value="astar_euclidean"><span></span>A* 欧几里得</button>
-                  </div>
-                </div>
-                <div class="algorithm-choice">
-                  <div class="algorithm-label-row">
-                    <label class="top-label" for="solverSelect">整体取书算法</label>
-                    <button class="hint-button" type="button" aria-label="整体取书算法说明">
-                      i
-                      <span class="hint-popover">用于决定多本书的访问顺序，降低本次取书总代价。</span>
-                    </button>
-                  </div>
-                  <select id="solverSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                    <option value="" selected>请选择整体取书算法</option>
-                    <option value="greedy">贪心最近邻（Greedy）</option>
-                    <option value="greedy_2opt">贪心 + 2-opt 优化</option>
-                    <option value="state_astar">状态空间 A* 搜索</option>
-                    <option value="branch_bound">分支限界搜索</option>
-                  </select>
-                  <div class="algorithm-options" data-algorithm-group="solverSelect">
-                    <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
-                    <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
-                    <button type="button" class="algorithm-option" data-value="state_astar"><span></span>状态空间 A* 搜索</button>
-                    <button type="button" class="algorithm-option" data-value="branch_bound"><span></span>分支限界搜索</button>
-                  </div>
-                </div>
-              </section>
-              <section class="algorithm-card algorithm-analysis-card">
-                <div class="section-title">
-                  <h2>算法分析</h2>
-                </div>
-                <div class="metrics analysis-empty" id="pathMetrics">
-                  <strong>等待生成路径</strong>
-                </div>
-                <div class="compare-box">
-                  <button class="primary wide" id="openCompareModal">多算法比较</button>
-                </div>
-              </section>
-            </section>
+            <aside class="tool-workspace" data-workbench-panel="tools">
+              <div class="tool-rail" aria-label="取书工具">
+                <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="算法选择" title="算法选择"><b>⚙</b><span>算法</span></button>
+                <button class="tool-toggle-button active" type="button" data-tool-toggle="routeStepsTools" aria-expanded="true" aria-label="取书步骤" title="取书步骤"><b>☰</b><span>步骤</span></button>
+                <button class="tool-toggle-button" type="button" data-tool-toggle="metricsTools" aria-expanded="false" aria-label="算法指标" title="算法指标"><b>▥</b><span>指标</span></button>
+                <button class="tool-toggle-button" type="button" data-tool-action="compare" aria-label="多算法比较" title="多算法比较"><b>⚖</b><span>比较</span></button>
+              </div>
+            </aside>
+            <div class="mobile-workbench-tabs" role="tablist" aria-label="取书工作台视图">
+              <button type="button" class="active" data-workbench-view="map">地图</button>
+              <button type="button" data-workbench-view="tasks">任务</button>
+              <button type="button" data-workbench-view="tools">工具</button>
+            </div>
           </div>
         </section>
 

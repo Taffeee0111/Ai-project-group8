@@ -17,6 +17,7 @@ class RecommendationUiStaticTest(unittest.TestCase):
         self.assertIn("modelStatus", source)
         self.assertIn("bookCard(book, { favoriteToggle: true })", source)
         self.assertNotIn("推荐原因：", source)
+        self.assertIn("data.summary ? `<div class=\"ml-summary\">", source)
 
     def test_profile_keywords_hide_debug_weights_but_genres_keep_counts(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")

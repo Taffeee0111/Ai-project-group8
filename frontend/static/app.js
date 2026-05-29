@@ -38,8 +38,6 @@ const PATH_ALGORITHMS = [
 const ORDER_ALGORITHMS = [
   ["greedy", "贪心最近邻"],
   ["greedy_2opt", "贪心 + 2-opt"],
-  ["state_astar", "状态空间 A*"],
-  ["branch_bound", "分支限界"],
 ];
 
 const titles = {
@@ -346,7 +344,7 @@ async function loadRecommendations() {
       : "未训练也可使用，当前展示热门高评分推荐";
   profile.classList.remove("is-loading");
   profile.innerHTML = `
-    <div class="ml-summary">${escapeHtml(data.summary || "")}</div>
+    ${data.summary ? `<div class="ml-summary">${escapeHtml(data.summary)}</div>` : ""}
     <div class="ml-weights">
       <span>模型 <strong>${modelStatus.available ? "已加载" : "未训练"}</strong></span>
       ${modelStatus.embeddingDim ? `<span>Embedding <strong>${escapeHtml(modelStatus.embeddingDim)}</strong></span>` : ""}
@@ -472,6 +470,33 @@ function setAlgorithmSelection(selectId, value) {
   select.value = value;
   syncAlgorithmOptions(selectId);
   markRouteSettingsChanged();
+}
+
+function toggleWorkbenchTool(panelId) {
+  const panel = qs(`#${panelId}`);
+  if (!panel) return;
+  const shouldOpen = panel.classList.contains("collapsed");
+  document.querySelectorAll(".floating-tool-panel").forEach((item) => {
+    item.classList.toggle("collapsed", item.id !== panelId || !shouldOpen);
+  });
+  document.querySelectorAll("[data-tool-toggle]").forEach((button) => {
+    const active = button.dataset.toolToggle === panelId && shouldOpen;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-expanded", String(active));
+  });
+  requestAnimationFrame(renderMap);
+}
+
+function setWorkbenchView(view) {
+  const workbench = qs(".pickup-workbench");
+  if (!workbench) return;
+  workbench.dataset.mobileView = view;
+  document.querySelectorAll("[data-workbench-view]").forEach((button) => {
+    const active = button.dataset.workbenchView === view;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  requestAnimationFrame(renderMap);
 }
 
 function scheduleAutoPlan() {
@@ -1183,6 +1208,7 @@ async function planPath(options = {}) {
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "";
+  const useConstraints = constraintsEnabled();
   if (!algorithm || !method) {
     openNotice("需要先选择两点路径算法和整体取书算法。", "需要选择算法");
     resetPathMetrics();
@@ -1195,7 +1221,7 @@ async function planPath(options = {}) {
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
-      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat }),
+      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat, constraintsEnabled: useConstraints }),
     });
     if (requestId !== state.planRequestId) return;
   } catch (err) {
@@ -1228,13 +1254,22 @@ async function planPath(options = {}) {
   state.playbackStartProgress = 0;
   const pathAlgorithm = selectedOptionText("#algorithmSelect", result.algorithm.toUpperCase());
   const orderAlgorithm = selectedOptionText("#solverSelect", String(result.method || method).toUpperCase());
+  const statsSummary = constraintStatsSummary(result.constraintStats);
+  const cspTime = cspRuntimeText(result);
+  const pathTime = pathRuntimeText(result);
+  const timingRows = timingMetricsHtml(cspTime, pathTime);
+  const querySummary = pathQuerySummary(result);
   qs("#pathMetrics").classList.remove("analysis-empty");
   qs("#pathMetrics").innerHTML = `
     <section class="analysis-group">
       <div class="metric-row"><span>总代价</span><strong>${result.distance}</strong></div>
       <div class="metric-row"><span>两点算法</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
       <div class="metric-row"><span>整体算法</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
+      ${timingRows}
+      ${statsSummary ? `<div class="metric-row"><span>CSP 削减</span><strong>${escapeHtml(statsSummary)}</strong></div>` : ""}
+      ${querySummary ? `<div class="metric-row"><span>路径查询</span><strong>${escapeHtml(querySummary)}</strong></div>` : ""}
       ${result.pathExpanded != null ? `<div class="metric-row"><span>底层路径扩展</span><strong>${result.pathExpanded}</strong></div>` : ""}
+      ${result.precomputeExpanded != null ? `<div class="metric-row"><span>预计算扩展</span><strong>${result.precomputeExpanded}</strong></div>` : ""}
       ${result.solverExpanded != null ? `<div class="metric-row"><span>整体规划扩展</span><strong>${result.solverExpanded}</strong></div>` : ""}
       <div class="metric-row"><span>运行时间</span><strong>${result.runtimeMs} ms</strong></div>
     </section>
@@ -1246,6 +1281,74 @@ async function planPath(options = {}) {
 
 function compareLabel(list, value) {
   return list.find(([key]) => key === value)?.[1] || value;
+}
+
+function constraintsEnabled() {
+  return Boolean(qs("#constraintsToggle")?.checked);
+}
+
+function formatMetricNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value;
+  return Number.isInteger(number) ? String(number) : number.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function timingMetricsHtml(cspTime, pathTime) {
+  return `
+      <div class="metric-row timing-metric-row" data-metric="csp-runtime"><span>约束传播耗时</span><strong>${escapeHtml(cspTime)}</strong></div>
+      <div class="metric-row timing-metric-row" data-metric="path-runtime"><span>路径算法耗时</span><strong>${escapeHtml(pathTime)}</strong></div>`;
+}
+
+function firstFiniteMetric(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function sumSegmentRuntime(result) {
+  const segments = Array.isArray(result.segments) ? result.segments : [];
+  const total = segments.reduce((sum, segment) => {
+    const value = Number(segment.runtimeMs);
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+  return total > 0 ? total : null;
+}
+
+function cspRuntimeText(result) {
+  if (!result.constraintsEnabled) return "无";
+  const value = firstFiniteMetric(result.cspRuntimeMs, result.constraintStats?.cspRuntimeMs);
+  return `${formatMetricNumber(value ?? 0)} ms`;
+}
+
+function pathRuntimeText(result) {
+  const value = firstFiniteMetric(
+    result.pathSearchRuntimeMs,
+    result.constraintStats?.pathSearchRuntimeMs,
+    result.precomputeRuntimeMs,
+    sumSegmentRuntime(result),
+    result.runtimeMs
+  );
+  return value == null ? "-" : `${formatMetricNumber(value)} ms`;
+}
+
+function pathQuerySummary(result) {
+  const stats = result.constraintStats || {};
+  if (stats.pathQueriesExecuted == null && stats.pathQueriesBaseline == null) return "";
+  const executed = stats.pathQueriesExecuted == null ? "-" : stats.pathQueriesExecuted;
+  const baseline = stats.pathQueriesBaseline == null ? "-" : stats.pathQueriesBaseline;
+  const saved = stats.pathQueriesBaseline != null && stats.pathQueriesExecuted != null ? Math.max(0, Number(stats.pathQueriesBaseline) - Number(stats.pathQueriesExecuted)) : null;
+  return `${executed} / ${baseline}${saved != null ? `，节省 ${saved}` : ""}`;
+}
+
+function constraintStatsSummary(stats) {
+  if (!stats) return "";
+  const saved = Number(stats.pathQueriesSaved || 0);
+  const savedText = saved > 0 ? `，合并节省查询 ${stats.pathQueriesSaved}` : "";
+  const batchText = stats.batchGroups != null ? `，批处理组 ${stats.batchGroups}` : "";
+  const cacheText = stats.cacheHits != null ? `，缓存命中 ${stats.cacheHits}` : "";
+  return `目标 ${stats.originalTargets} -> ${stats.reducedTargets}，合并 ${stats.mergedBooks} 本${batchText}${savedText}${cacheText}`;
 }
 
 function closeCompareModal() {
@@ -1261,6 +1364,7 @@ function openCompareModal() {
   qs("#compareSummary").innerHTML = `
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>约束传播<strong>${task.constraintsEnabled ? "开启" : "关闭"}</strong></span>
     <span>当前组合<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">请选择一种比较方式。</div>`;
@@ -1277,7 +1381,7 @@ function compareTaskPayload() {
     openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
     return null;
   }
-  return { ids, end: state.selectedSeat };
+  return { ids, end: state.selectedSeat, constraintsEnabled: constraintsEnabled() };
 }
 
 async function openAlgorithmCompare(type) {
@@ -1303,6 +1407,7 @@ async function openAlgorithmCompare(type) {
   qs("#compareSummary").innerHTML = `
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>约束传播<strong>${task.constraintsEnabled ? "开启" : "关闭"}</strong></span>
     <span>${escapeHtml(fixedLabel.split("：")[0])}<strong>${escapeHtml(fixedLabel.split("：")[1] || "-")}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">比较中...</div>`;
@@ -1315,7 +1420,7 @@ async function openAlgorithmCompare(type) {
     try {
       const result = await api("/api/pickup/solve", {
         method: "POST",
-        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end }),
+        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end, constraintsEnabled: task.constraintsEnabled }),
       });
       rows.push({
         value,
@@ -1557,6 +1662,19 @@ function bindEvents() {
   qs("#nextRouteStep").addEventListener("click", () => moveRouteSegment(1));
   qs("#solverSelect").addEventListener("change", markRouteSettingsChanged);
   qs("#algorithmSelect").addEventListener("change", markRouteSettingsChanged);
+  qs("#constraintsToggle").addEventListener("change", markRouteSettingsChanged);
+  document.querySelectorAll("[data-tool-toggle]").forEach((button) => {
+    button.addEventListener("click", () => toggleWorkbenchTool(button.dataset.toolToggle));
+  });
+  document.querySelectorAll("[data-tool-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.toolAction === "compare") openCompareModal();
+      if (button.dataset.toolAction === "expand-map") openMapModal();
+    });
+  });
+  document.querySelectorAll("[data-workbench-view]").forEach((button) => {
+    button.addEventListener("click", () => setWorkbenchView(button.dataset.workbenchView));
+  });
   document.querySelectorAll("[data-algorithm-group]").forEach((group) => {
     group.addEventListener("click", (event) => {
       const option = event.target.closest(".algorithm-option");
@@ -1564,14 +1682,12 @@ function bindEvents() {
       setAlgorithmSelection(group.dataset.algorithmGroup, option.dataset.value);
     });
   });
-  qs("#openCompareModal").addEventListener("click", openCompareModal);
   qs("#comparePathAlgorithms").addEventListener("click", () => openAlgorithmCompare("path"));
   qs("#compareOrderAlgorithms").addEventListener("click", () => openAlgorithmCompare("order"));
   qs("#libraryGrid").addEventListener("click", (event) => {
     const cell = event.target.closest("[data-seat='true']");
     if (cell) selectSeat(cell.dataset.row, cell.dataset.col);
   });
-  qs("#openMapModal").addEventListener("click", openMapModal);
   qs("#closeMapModal").addEventListener("click", closeMapModal);
   qs("#mapModal").addEventListener("click", (event) => {
     if (event.target.id === "mapModal") closeMapModal();
