@@ -56,17 +56,38 @@ function authHeaders() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "请求失败");
-  return data;
+  const { timeoutMs, ...requestOptions } = options;
+  let timeoutId = null;
+  let signal = requestOptions.signal;
+  if (timeoutMs) {
+    const controller = new AbortController();
+    signal = controller.signal;
+    timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  }
+  try {
+    const response = await fetch(path, {
+      ...requestOptions,
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...(requestOptions.headers || {}),
+      },
+    });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+    if (!response.ok) throw new Error(data.error || "请求失败");
+    return data;
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("请求超时，请稍后重试");
+    throw err;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
 }
 
 function setPage(page) {
@@ -276,12 +297,27 @@ async function searchBooks(options = {}) {
   const params = new URLSearchParams(searchFilterParams());
   params.set("keyword", keyword);
   params.set("record", record ? "1" : "0");
-  const books = await api(`/api/books/search?${params.toString()}`);
   const list = qs("#bookResults");
-  list.innerHTML = "";
-  books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword, datasetMeta: true, collapsibleDetails: true })));
-  qs("#resultCount").textContent = `${books.length} 本`;
-  if (options.refreshRecommendations || record) scheduleRecommendationRefresh();
+  list.classList.add("is-loading");
+  if (!list.children.length) {
+    list.innerHTML = `<div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>`;
+  }
+  try {
+    const books = await api(`/api/books/search?${params.toString()}`, { timeoutMs: 20000 });
+    list.innerHTML = "";
+    if (!books.length) {
+      list.innerHTML = `<div class="state-card"><strong>没有找到匹配图书</strong>调整关键词或筛选条件后再试。</div>`;
+    } else {
+      books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword, datasetMeta: true, collapsibleDetails: true })));
+    }
+    qs("#resultCount").textContent = `${books.length} 本`;
+    if (options.refreshRecommendations || record) scheduleRecommendationRefresh();
+  } catch (err) {
+    list.innerHTML = `<div class="state-card warning"><strong>搜索暂时不可用</strong>${escapeHtml(err.message)}</div>`;
+    qs("#resultCount").textContent = "加载失败";
+  } finally {
+    list.classList.remove("is-loading");
+  }
 }
 
 function searchFilterParams() {
@@ -328,42 +364,53 @@ async function loadRecommendations() {
   const requestId = ++state.recommendationRequestId;
   const list = qs("#recommendations");
   const profile = qs("#mlProfile");
-  if (!list.children.length) {
-    list.innerHTML = `<div class="profile-card">推荐加载中...</div>`;
-  }
+  list.innerHTML = `<div class="skeleton-card"></div><div class="skeleton-card"></div>`;
   profile.classList.add("is-loading");
-  const data = await api("/api/books/recommendations?limit=10&analysis=1");
-  if (requestId !== state.recommendationRequestId) return;
-  const keywords = data.profileKeywords || [];
-  const profileGenres = data.preferredGenres || [];
-  const modelStatus = data.modelStatus || {};
-  const modelStatusNote = modelStatus.available
-    ? ""
-    : String(modelStatus.reason || "").startsWith("load_failed")
-      ? "模型加载失败，已切换为热门推荐"
-      : "未训练也可使用，当前展示热门高评分推荐";
-  profile.classList.remove("is-loading");
-  profile.innerHTML = `
-    ${data.summary ? `<div class="ml-summary">${escapeHtml(data.summary)}</div>` : ""}
-    <div class="ml-weights">
-      <span>模型 <strong>${modelStatus.available ? "已加载" : "未训练"}</strong></span>
-      ${modelStatus.embeddingDim ? `<span>Embedding <strong>${escapeHtml(modelStatus.embeddingDim)}</strong></span>` : ""}
-      ${modelStatus.interactionCount ? `<span>交互 <strong>${formatNumber(modelStatus.interactionCount)}</strong></span>` : ""}
-    </div>
-    ${modelStatusNote ? `<div class="ml-summary">${escapeHtml(modelStatusNote)}</div>` : ""}
-    <div class="ml-keywords">
-      ${keywords.length
-        ? keywords.map((item) => `<span>${escapeHtml(item.term)}</span>`).join("")
-        : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
-    </div>
-    <div class="ml-keywords profile-genres">
-      ${profileGenres.length
-        ? profileGenres.map((item) => `<span>${escapeHtml(item.genre)} <strong>${item.weight}</strong></span>`).join("")
-        : ""}
-    </div>
-  `;
-  list.innerHTML = "";
-  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
+  profile.innerHTML = `<div class="ml-summary">正在生成推荐结果...</div>`;
+  try {
+    const data = await api("/api/books/recommendations?limit=10&analysis=1", { timeoutMs: 12000 });
+    if (requestId !== state.recommendationRequestId) return;
+    const keywords = data.profileKeywords || [];
+    const profileGenres = data.preferredGenres || [];
+    const modelStatus = data.modelStatus || {};
+    const modelStatusNote = modelStatus.available
+      ? ""
+      : String(modelStatus.reason || "").startsWith("load_failed")
+        ? "模型加载失败，已切换为热门推荐"
+        : "未训练也可使用，当前展示热门高评分推荐";
+    profile.innerHTML = `
+      ${data.summary ? `<div class="ml-summary">${escapeHtml(data.summary)}</div>` : ""}
+      <div class="ml-weights">
+        <span>模型 <strong>${modelStatus.available ? "已加载" : "未训练"}</strong></span>
+        ${modelStatus.embeddingDim ? `<span>Embedding <strong>${escapeHtml(modelStatus.embeddingDim)}</strong></span>` : ""}
+        ${modelStatus.interactionCount ? `<span>交互 <strong>${formatNumber(modelStatus.interactionCount)}</strong></span>` : ""}
+      </div>
+      ${modelStatusNote ? `<div class="ml-summary">${escapeHtml(modelStatusNote)}</div>` : ""}
+      <div class="ml-keywords">
+        ${keywords.length
+          ? keywords.map((item) => `<span>${escapeHtml(item.term)}</span>`).join("")
+          : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
+      </div>
+      <div class="ml-keywords profile-genres">
+        ${profileGenres.length
+          ? profileGenres.map((item) => `<span>${escapeHtml(item.genre)} <strong>${item.weight}</strong></span>`).join("")
+          : ""}
+      </div>
+    `;
+    list.innerHTML = "";
+    const books = data.books || [];
+    if (!books.length) {
+      list.innerHTML = `<div class="state-card"><strong>暂无推荐</strong>搜索或收藏几本书后会生成更准确的结果。</div>`;
+    } else {
+      books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
+    }
+  } catch (err) {
+    if (requestId !== state.recommendationRequestId) return;
+    profile.innerHTML = `<div class="state-card warning"><strong>推荐暂时不可用</strong>搜索和取书功能仍可正常使用。</div>`;
+    list.innerHTML = `<div class="state-card warning"><strong>无法加载推荐</strong>${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (requestId === state.recommendationRequestId) profile.classList.remove("is-loading");
+  }
 }
 
 function setFavoriteButtonsState(bookId, isFavorite, disabled = false) {
@@ -1560,7 +1607,10 @@ async function submitAuth() {
   const isRegister = qs("#registerTab").classList.contains("active");
   const username = qs("#authUsername").value.trim();
   const password = qs("#authPassword").value;
+  const submitButton = qs("#authSubmit");
   try {
+    submitButton.disabled = true;
+    submitButton.textContent = isRegister ? "注册中..." : "登录中...";
     if (isRegister) {
       const confirm = qs("#authConfirmPassword") ? qs("#authConfirmPassword").value : "";
       if (!username || !password || !confirm) {
@@ -1586,6 +1636,7 @@ async function submitAuth() {
     const data = await api("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
+      timeoutMs: 12000,
     });
     state.token = data.token;
     localStorage.setItem("token", data.token);
@@ -1593,6 +1644,9 @@ async function submitAuth() {
     setPage("search");
   } catch (err) {
     qs("#authMessage").textContent = err.message;
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = qs("#registerTab").classList.contains("active") ? "注册" : "登录";
   }
 }
 

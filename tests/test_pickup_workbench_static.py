@@ -78,21 +78,22 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         button_block = styles[styles.index(".tool-toggle-button {") : styles.index(".tool-toggle-button:hover")]
 
         self.assertEqual(tool_rail.count('class="tool-toggle-button'), 4)
+        self.assertEqual(tool_rail.count('class="tool-icon"'), 4)
         for label in ("算法", "步骤", "指标", "比较"):
             self.assertIn(f"<span>{label}</span>", tool_rail)
         self.assertNotIn('id="openMapModal"', tool_rail)
         self.assertIn("padding-top: 31px;", tool_workspace_block)
         self.assertIn("padding-top: 0;", mobile_block[mobile_block.index(".tool-workspace {") : mobile_block.index("}", mobile_block.index(".tool-workspace {"))])
-        self.assertIn("width: 68px;", rail_block)
-        self.assertIn("gap: 0;", rail_block)
-        self.assertIn("border: 1px solid #9fb3c0;", rail_block)
-        self.assertIn("overflow: hidden;", rail_block)
-        self.assertNotIn("padding-top:", rail_block)
+        self.assertIn("width: 82px;", rail_block)
+        self.assertIn("gap: 8px;", rail_block)
+        self.assertIn("padding: 8px;", rail_block)
+        self.assertIn("border-radius: 18px;", rail_block)
+        self.assertIn("overflow: visible;", rail_block)
         self.assertIn("width: 100%;", button_block)
-        self.assertIn("height: 42px;", button_block)
-        self.assertIn("border-top: 1px solid #b8c8d2;", button_block)
-        self.assertIn("grid-template-columns: auto minmax(0, 1fr);", button_block)
-        self.assertNotIn("gap: 8px;", short_height_block[short_height_block.index(".tool-rail {") : short_height_block.index("}", short_height_block.index(".tool-rail {"))])
+        self.assertIn("height: 58px;", button_block)
+        self.assertIn("border: 1px solid rgba(196, 211, 218, 0.72);", button_block)
+        self.assertIn("grid-template-columns: 1fr;", button_block)
+        self.assertIn("gap: 8px;", short_height_block[short_height_block.index(".tool-rail {") : short_height_block.index("}", short_height_block.index(".tool-rail {"))])
 
     def test_left_sidebar_keeps_only_route_controls_and_book_selection(self) -> None:
         html = INDEX_HTML.read_text(encoding="utf-8")
@@ -129,7 +130,7 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         control_actions_block = styles[styles.index(".route-control-actions {") : styles.index(".route-control-button {")]
         control_button_block = styles[styles.index(".route-control-button {") : styles.index(".route-control-button:hover")]
 
-        self.assertIn("grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) 68px;", workbench_block)
+        self.assertIn("grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) 82px;", workbench_block)
         self.assertIn("--pickup-map-size:", workbench_block)
         self.assertIn("--pickup-map-header-height:", workbench_block)
         self.assertIn("--pickup-map-gap:", workbench_block)
@@ -174,15 +175,15 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         rail_block = styles[styles.index(".tool-rail {") : styles.index(".tool-toggle-button {")]
         button_block = styles[styles.index(".tool-toggle-button {") : styles.index(".tool-toggle-button:hover")]
 
-        self.assertIn("grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) 68px;", workbench_block)
+        self.assertIn("grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) 82px;", workbench_block)
         self.assertIn("position: absolute;", tools_block)
         self.assertIn("right: 12px;", tools_block)
         self.assertIn("z-index: 12;", tools_block)
         self.assertIn("width: min(280px, 34vw);", tools_block)
         self.assertIn("backdrop-filter: blur(14px);", panel_block)
-        self.assertIn("gap: 0;", rail_block)
+        self.assertIn("gap: 8px;", rail_block)
         self.assertIn("width: 100%;", button_block)
-        self.assertIn("height: 42px;", button_block)
+        self.assertIn("height: 58px;", button_block)
 
     def test_pickup_selection_uses_full_book_cards(self) -> None:
         script = APP_JS.read_text(encoding="utf-8")
@@ -277,3 +278,4 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         self.assertNotIn("rgba(255, 255, 255, 0.88)", legend_block)
         self.assertNotIn("calc(100% - 300px)", legend_block)
         self.assertNotIn("padding-top:", rail_block)
+

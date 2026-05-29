@@ -3,10 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="图书馆智能借阅系统：搜索图书、查看推荐，并规划馆内取书路线。" />
+    <meta name="theme-color" content="#0f1b24" />
     <title>图书馆智能借阅系统</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#mainContent">跳到主要内容</a>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -30,7 +34,7 @@
         </div>
       </aside>
 
-      <main>
+      <main id="mainContent" tabindex="-1">
         <header class="topbar">
           <div>
             <h1 id="pageTitle">图书搜索</h1>
@@ -250,10 +254,51 @@
             </section>
             <aside class="tool-workspace" data-workbench-panel="tools">
               <div class="tool-rail" aria-label="取书工具">
-                <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="算法选择" title="算法选择"><b>⚙</b><span>算法</span></button>
-                <button class="tool-toggle-button active" type="button" data-tool-toggle="routeStepsTools" aria-expanded="true" aria-label="取书步骤" title="取书步骤"><b>☰</b><span>步骤</span></button>
-                <button class="tool-toggle-button" type="button" data-tool-toggle="metricsTools" aria-expanded="false" aria-label="算法指标" title="算法指标"><b>▥</b><span>指标</span></button>
-                <button class="tool-toggle-button" type="button" data-tool-action="compare" aria-label="多算法比较" title="多算法比较"><b>⚖</b><span>比较</span></button>
+                <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="算法选择" title="算法选择">
+                  <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="6" cy="6" r="2.5"></circle>
+                    <circle cx="18" cy="6" r="2.5"></circle>
+                    <circle cx="12" cy="18" r="2.5"></circle>
+                    <path d="M8.3 7.4 10.7 16"></path>
+                    <path d="M15.7 7.4 13.3 16"></path>
+                    <path d="M8.5 6h7"></path>
+                  </svg>
+                  <span>算法</span>
+                </button>
+                <button class="tool-toggle-button active" type="button" data-tool-toggle="routeStepsTools" aria-expanded="true" aria-label="取书步骤" title="取书步骤">
+                  <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 6h11"></path>
+                    <path d="M8 12h11"></path>
+                    <path d="M8 18h11"></path>
+                    <path d="M4.5 5.2v3"></path>
+                    <path d="M3.6 5.2h1.2"></path>
+                    <path d="M3.5 11.4c.5-.7 2-.6 2 .4 0 .8-1 1.2-2 2.2h2.2"></path>
+                    <path d="M3.6 17h1.8l-1 1.1c.8 0 1.4.3 1.4 1 0 .8-.8 1.2-2.1.9"></path>
+                  </svg>
+                  <span>步骤</span>
+                </button>
+                <button class="tool-toggle-button" type="button" data-tool-toggle="metricsTools" aria-expanded="false" aria-label="算法指标" title="算法指标">
+                  <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 20h16"></path>
+                    <path d="M6 16v-4"></path>
+                    <path d="M12 16V7"></path>
+                    <path d="M18 16v-7"></path>
+                    <rect x="5" y="12" width="2" height="4"></rect>
+                    <rect x="11" y="7" width="2" height="9"></rect>
+                    <rect x="17" y="9" width="2" height="7"></rect>
+                  </svg>
+                  <span>指标</span>
+                </button>
+                <button class="tool-toggle-button" type="button" data-tool-action="compare" aria-label="多算法比较" title="多算法比较">
+                  <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 4v16"></path>
+                    <path d="M6 7h12"></path>
+                    <path d="M7 7 4 13h6L7 7Z"></path>
+                    <path d="M17 7 14 13h6L17 7Z"></path>
+                    <path d="M9 20h6"></path>
+                  </svg>
+                  <span>比较</span>
+                </button>
               </div>
             </aside>
             <div class="mobile-workbench-tabs" role="tablist" aria-label="取书工作台视图">
