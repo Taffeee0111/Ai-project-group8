@@ -9,10 +9,11 @@ echo.
 echo Do not close this window. Closing it will stop the website.
 echo.
 
-if exist "C:\Users\Lenovo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" (
-  "C:\Users\Lenovo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" backend\server.py
+if exist ".venv\Scripts\python.exe" (
+  .venv\Scripts\python.exe backend\server.py
 ) else (
-  python backend\server.py
+  echo Local virtual environment was not found.
+  echo Run setup.bat first, then start the server again.
 )
 
 pause

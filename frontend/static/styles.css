@@ -530,6 +530,11 @@ section {
   font-weight: 700;
 }
 
+.favorite-button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
 .tag {
   display: inline-flex;
   background: #e6f4f1;
@@ -547,6 +552,10 @@ section {
   background: #f8fbfc;
   padding: 12px;
   margin-bottom: 12px;
+}
+
+.ml-profile.is-loading {
+  opacity: 0.72;
 }
 
 .ml-summary {
@@ -593,32 +602,6 @@ section {
 .ml-keywords strong,
 .ml-weights strong {
   margin-left: 4px;
-}
-
-.recommendation-score-breakdown {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 8px;
-}
-
-.recommendation-score-breakdown strong,
-.recommendation-score-breakdown span {
-  display: inline-flex;
-  border-radius: 999px;
-  padding: 3px 7px;
-  font-size: 12px;
-}
-
-.recommendation-score-breakdown strong {
-  background: #e6f4f1;
-  color: #096b68;
-}
-
-.recommendation-score-breakdown span {
-  background: #f7fafb;
-  border: 1px solid var(--line);
-  color: #42515a;
 }
 
 .pickup-layout {

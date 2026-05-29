@@ -56,12 +56,34 @@ class SearchDatasetFacetsTest(unittest.TestCase):
         self.assertNotIn("languages", facets)
         self.assertNotIn("formats", facets)
 
-    def test_fresh_database_imports_dataset_auxiliary_tables(self) -> None:
+    def test_fresh_database_keeps_recommendation_training_offline(self) -> None:
         with server.connect() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM books").fetchone()[0], 10000)
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_book_shelves").fetchone()[0], 0)
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_interactions").fetchone()[0], 0)
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_book_id_map").fetchone()[0], 0)
+            table_names = {
+                row["name"]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            self.assertNotIn("recommendation_book_stats", table_names)
+            self.assertNotIn("recommendation_book_neighbors", table_names)
+            self.assertNotIn("dataset_interactions", table_names)
+            self.assertNotIn("dataset_book_shelves", table_names)
+            self.assertNotIn("dataset_book_id_map", table_names)
+
+    def test_migration_drops_legacy_dataset_tables_without_removing_users(self) -> None:
+        with server.connect() as conn:
+            conn.execute("CREATE TABLE dataset_interactions(user_id_csv INTEGER, book_id TEXT)")
+            conn.execute(
+                "INSERT OR IGNORE INTO users(username,password_hash,created_at) VALUES(?,?,?)",
+                ("legacy-user", server.hash_password("secret123"), server.now()),
+            )
+        server.init_db()
+        with server.connect() as conn:
+            table_names = {
+                row["name"]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            self.assertNotIn("dataset_interactions", table_names)
+            self.assertIsNotNone(conn.execute("SELECT id FROM users WHERE username='legacy-user'").fetchone())
 
     def test_search_matches_publisher_and_returns_dataset_metadata(self) -> None:
         rows = self.fetch_json("/api/books/search?keyword=Scholastic&record=0")

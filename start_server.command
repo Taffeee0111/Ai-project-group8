@@ -11,12 +11,11 @@ echo
 echo "Do not close this window. Closing it will stop the website."
 echo
 
-if command -v python3 >/dev/null 2>&1; then
-  python3 backend/server.py
-elif command -v python >/dev/null 2>&1; then
-  python backend/server.py
+if [ -x ".venv/bin/python" ]; then
+  .venv/bin/python backend/server.py
 else
-  echo "Python was not found. Please install Python 3 and try again."
+  echo "Local virtual environment was not found."
+  echo "Run ./setup.command first, then start the server again."
   read -r -p "Press Enter to close this window..."
   exit 1
 fi

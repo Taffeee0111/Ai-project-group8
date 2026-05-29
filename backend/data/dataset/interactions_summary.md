@@ -12,3 +12,5 @@
 - user_id_csv is the anonymized integer user ID from the Goodreads interaction CSV.
 - book_id is the Goodreads book ID used in books_10k.csv.
 - book_id_csv is the internal integer ID used by the original interaction CSV.
+- These rows are used for offline collaborative filtering training by `backend/ml/train_recommender.py`; they are not imported into SQLite during normal server startup.
+- A trained model is written to `backend/data/models/recommender.joblib` and can be regenerated from this CSV plus `books_10k.csv`.

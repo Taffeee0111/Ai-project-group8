@@ -22,6 +22,8 @@ const state = {
   pickerItems: [],
   pickerTempSelected: new Set(),
   selectedSeat: null,
+  recommendationRequestId: 0,
+  recommendationTimer: null,
 };
 
 const ROUTE_PLAYBACK_STEP_MS = 90;
@@ -41,10 +43,10 @@ const ORDER_ALGORITHMS = [
 ];
 
 const titles = {
-  login: ["登录 / 注册", "进入系统后可保存搜索历史、收藏和取书计划。"],
-  search: ["图书搜索", "搜索 10000 本 Goodreads 图书，收藏后可生成取书路线。"],
-  pickup: ["取书路径规划", "在 30 × 30 棋盘地图上比较 BFS、UCS 和 A* 搜索策略。"],
-  profile: ["个人中心", "查看用户名、搜索历史和收藏图书。"],
+  login: ["登录 / 注册", ""],
+  search: ["图书搜索", ""],
+  pickup: ["取书路径规划", ""],
+  profile: ["个人中心", ""],
 };
 
 function qs(selector) {
@@ -80,7 +82,7 @@ function setPage(page) {
   qs("#pageSubtitle").textContent = titles[page][1];
   if (page === "search") {
     searchBooks({ record: false });
-    loadRecommendations();
+    scheduleRecommendationRefresh();
   }
   if (page === "pickup") loadPickup();
   if (page === "profile") loadProfile();
@@ -90,7 +92,6 @@ function bookCard(book, options = {}) {
   const keyword = options.highlight || "";
   const useDatasetSummary = Boolean(options.datasetMeta);
   const useDetails = Boolean(options.collapsibleDetails);
-  const useRecommendationMeta = Boolean(options.recommendationMeta);
   const detailId = `book-details-${book.id}`;
   const canToggleFavorite = options.favoriteToggle;
   const isFavorite = Boolean(book.is_favorite);
@@ -110,8 +111,6 @@ function bookCard(book, options = {}) {
       ${useDatasetSummary ? bookMetricGrid(book) : ""}
       ${useDatasetSummary ? genrePreview(book.genres, keyword) : ""}
       ${book.similarity_percent !== undefined && book.similarity_percent !== null ? `<br><span class="ml-score">相似度：${book.similarity_percent}%</span>` : ""}
-      ${!useDatasetSummary && book.reason ? `<br>推荐原因：${escapeHtml(book.reason)}` : ""}
-      ${useRecommendationMeta ? recommendationScoreBreakdown(book) : ""}
     </div>
     ${useDetails ? bookDetailsPanel(book, keyword, detailId) : ""}
     <div class="book-actions">
@@ -124,28 +123,6 @@ function bookCard(book, options = {}) {
     </div>
   `;
   return div;
-}
-
-function recommendationScoreBreakdown(book) {
-  if (!book.score_breakdown) return "";
-  const parts = [
-    ["内容", book.score_breakdown.content],
-    ["协同", book.score_breakdown.collaborative],
-    ["热度", book.score_breakdown.popularity],
-    ["新颖", book.score_breakdown.novelty],
-  ];
-  return `
-    <div class="recommendation-score-breakdown">
-      <strong>综合分 ${escapeHtml(book.ml_score ?? "-")}</strong>
-      ${parts.map(([label, value]) => `<span>${label} ${formatScore(value)}</span>`).join("")}
-    </div>
-  `;
-}
-
-function formatScore(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "0.00";
-  return number.toFixed(2);
 }
 
 function bookPublisherLine(book, keyword) {
@@ -193,7 +170,6 @@ function bookDetailsPanel(book, keyword, detailId) {
     book.isbn13 ? detailRow("ISBN13", highlightText(book.isbn13, keyword)) : "",
     book.genres ? detailRow("Genres", highlightText(book.genres, keyword)) : "",
     book.match_score ? detailRow("匹配度", escapeHtml(book.match_score)) : "",
-    book.reason ? detailRow("推荐原因", escapeHtml(book.reason)) : "",
   ].filter(Boolean);
   const preview = descriptionPreview(book.description, keyword);
   if (preview) rows.push(detailRow("简介", preview));
@@ -307,7 +283,7 @@ async function searchBooks(options = {}) {
   list.innerHTML = "";
   books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword, datasetMeta: true, collapsibleDetails: true })));
   qs("#resultCount").textContent = `${books.length} 本`;
-  loadRecommendations();
+  if (options.refreshRecommendations || record) scheduleRecommendationRefresh();
 }
 
 function searchFilterParams() {
@@ -342,23 +318,44 @@ function resetSearchFilters() {
   searchBooks({ record: false });
 }
 
+function scheduleRecommendationRefresh(delay = 160) {
+  window.clearTimeout(state.recommendationTimer);
+  state.recommendationTimer = window.setTimeout(() => {
+    state.recommendationTimer = null;
+    loadRecommendations();
+  }, delay);
+}
+
 async function loadRecommendations() {
-  const data = await api("/api/books/recommendations?limit=10&analysis=1");
+  const requestId = ++state.recommendationRequestId;
   const list = qs("#recommendations");
   const profile = qs("#mlProfile");
+  if (!list.children.length) {
+    list.innerHTML = `<div class="profile-card">推荐加载中...</div>`;
+  }
+  profile.classList.add("is-loading");
+  const data = await api("/api/books/recommendations?limit=10&analysis=1");
+  if (requestId !== state.recommendationRequestId) return;
   const keywords = data.profileKeywords || [];
   const profileGenres = data.preferredGenres || [];
-  const modelWeights = data.modelWeights || {};
+  const modelStatus = data.modelStatus || {};
+  const modelStatusNote = modelStatus.available
+    ? ""
+    : String(modelStatus.reason || "").startsWith("load_failed")
+      ? "模型加载失败，已切换为热门推荐"
+      : "未训练也可使用，当前展示热门高评分推荐";
+  profile.classList.remove("is-loading");
   profile.innerHTML = `
     <div class="ml-summary">${escapeHtml(data.summary || "")}</div>
     <div class="ml-weights">
-      ${Object.entries(modelWeights).length
-        ? Object.entries(modelWeights).map(([key, value]) => `<span>${escapeHtml(key)} <strong>${Math.round(Number(value) * 100)}%</strong></span>`).join("")
-        : ""}
+      <span>模型 <strong>${modelStatus.available ? "已加载" : "未训练"}</strong></span>
+      ${modelStatus.embeddingDim ? `<span>Embedding <strong>${escapeHtml(modelStatus.embeddingDim)}</strong></span>` : ""}
+      ${modelStatus.interactionCount ? `<span>交互 <strong>${formatNumber(modelStatus.interactionCount)}</strong></span>` : ""}
     </div>
+    ${modelStatusNote ? `<div class="ml-summary">${escapeHtml(modelStatusNote)}</div>` : ""}
     <div class="ml-keywords">
       ${keywords.length
-        ? keywords.map((item) => `<span>${escapeHtml(item.term)} <strong>${item.weight}</strong></span>`).join("")
+        ? keywords.map((item) => `<span>${escapeHtml(item.term)}</span>`).join("")
         : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
     </div>
     <div class="ml-keywords profile-genres">
@@ -368,7 +365,16 @@ async function loadRecommendations() {
     </div>
   `;
   list.innerHTML = "";
-  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, recommendationMeta: true })));
+  (data.books || []).forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
+}
+
+function setFavoriteButtonsState(bookId, isFavorite, disabled = false) {
+  document.querySelectorAll(`[data-fav-toggle="${bookId}"]`).forEach((button) => {
+    button.dataset.favorite = isFavorite ? "true" : "false";
+    button.classList.toggle("active", isFavorite);
+    button.textContent = isFavorite ? "已收藏" : "收藏";
+    button.disabled = disabled;
+  });
 }
 
 async function toggleFavorite(bookId, isFavorite) {
@@ -376,23 +382,36 @@ async function toggleFavorite(bookId, isFavorite) {
     setPage("login");
     return;
   }
-  if (isFavorite) {
-    await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
-  } else {
-    await api(`/api/books/${bookId}/favorite`, { method: "POST", body: "{}" });
+  const nextState = !isFavorite;
+  setFavoriteButtonsState(bookId, nextState, true);
+  try {
+    if (isFavorite) {
+      await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
+    } else {
+      await api(`/api/books/${bookId}/favorite`, { method: "POST", body: "{}" });
+    }
+    setFavoriteButtonsState(bookId, nextState, false);
+    if (state.page === "pickup") await loadPickup();
+    if (state.page === "profile") await loadProfile();
+    scheduleRecommendationRefresh();
+  } catch (err) {
+    setFavoriteButtonsState(bookId, isFavorite, false);
+    openNotice(err.message, "收藏失败");
   }
-  if (state.page === "search") await searchBooks({ record: false });
-  if (state.page === "pickup") await loadPickup();
-  if (state.page === "profile") await loadProfile();
-  await loadRecommendations();
 }
 
 async function unfavoriteBook(bookId) {
-  await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
-  await searchBooks({ record: false });
-  await loadRecommendations();
-  if (state.page === "pickup") loadPickup();
-  if (state.page === "profile") loadProfile();
+  setFavoriteButtonsState(bookId, false, true);
+  try {
+    await api(`/api/books/${bookId}/favorite`, { method: "DELETE" });
+    setFavoriteButtonsState(bookId, false, false);
+    scheduleRecommendationRefresh();
+    if (state.page === "pickup") loadPickup();
+    if (state.page === "profile") loadProfile();
+  } catch (err) {
+    setFavoriteButtonsState(bookId, true, false);
+    openNotice(err.message, "取消收藏失败");
+  }
 }
 
 async function loadPickup() {
@@ -1482,11 +1501,11 @@ function bindEvents() {
   });
   qs("#resetSearchFilters").addEventListener("click", resetSearchFilters);
   ["#genreFilter"].forEach((selector) => {
-    qs(selector).addEventListener("change", () => searchBooks());
+    qs(selector).addEventListener("change", () => searchBooks({ record: false }));
   });
   ["#publisherFilter", "#yearFromFilter", "#yearToFilter", "#minRatingFilter", "#minRatingsCountFilter"].forEach((selector) => {
     qs(selector).addEventListener("keydown", (event) => {
-      if (event.key === "Enter") searchBooks();
+      if (event.key === "Enter") searchBooks({ record: false });
     });
   });
   document.body.addEventListener("click", (event) => {
@@ -1638,7 +1657,7 @@ async function boot() {
   await loadMe();
   await loadSearchFacets();
   await searchBooks({ record: false });
-  await loadRecommendations();
+  scheduleRecommendationRefresh(0);
   updateRouteProgress();
 }
 

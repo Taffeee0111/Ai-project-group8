@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.venv/
 backend/data/*.log
 .DS_Store
 backend/data/library.db
+backend/data/models/*.joblib

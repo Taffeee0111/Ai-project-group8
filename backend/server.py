@@ -26,12 +26,13 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend" / "static"
 BOOK_DOCX = DATA_DIR / "book_collection_filled_1500.docx"
 DATASET_DIR = DATA_DIR / "dataset"
 DATASET_BOOKS_CSV = DATASET_DIR / "books_10k.csv"
-DATASET_SHELVES_CSV = DATASET_DIR / "book_shelves_10k.csv"
-DATASET_INTERACTIONS_CSV = DATASET_DIR / "interactions_10k.csv"
-DATASET_ID_MAP_CSV = DATASET_DIR / "book_id_map_10k.csv"
-DATASET_IMPORT_BATCH_SIZE = 5000
+RECOMMENDER_MODEL_PATH = DATA_DIR / "models" / "recommender.joblib"
 
 TOKENS: dict[str, int] = {}
+BOOK_VECTOR_CACHE: dict[str, Any] = {}
+POPULARITY_CACHE: dict[str, dict[str, float]] | None = None
+RECOMMENDATION_CACHE: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+RECOMMENDER_MODEL_CACHE: dict[str, Any] = {}
 AUTH_SECRET = "algorithm-ai-library-auth"
 GRID_SIZE = 30
 ENTRANCE = (0, 0)
@@ -58,7 +59,6 @@ READING_AREAS = [
     (range(18, 20), range(16, 20)),
 ]
 DEFAULT_SEAT = (10, 10)
-HYBRID_WEIGHTS = {"content": 0.45, "collaborative": 0.3, "popularity": 0.2, "novelty": 0.05}
 BOOK_DATASET_COLUMNS = {
     "work_id": "TEXT",
     "original_title": "TEXT",
@@ -282,99 +282,12 @@ def hydrate_dataset_book_metadata(conn: sqlite3.Connection) -> None:
     conn.executemany(f"UPDATE books SET {assignments} WHERE book_id=:book_id", rows)
 
 
-def import_csv_batches(
-    conn: sqlite3.Connection,
-    path: Path,
-    sql: str,
-    row_builder,
-    batch_size: int = DATASET_IMPORT_BATCH_SIZE,
-) -> None:
-    if not path.exists():
-        return
-    batch = []
-    with path.open(newline="", encoding="utf-8") as file:
-        for row in csv.DictReader(file):
-            batch.append(row_builder(row))
-            if len(batch) >= batch_size:
-                conn.executemany(sql, batch)
-                batch.clear()
-    if batch:
-        conn.executemany(sql, batch)
-
-
-def ensure_dataset_auxiliary_tables(conn: sqlite3.Connection) -> None:
+def drop_raw_dataset_auxiliary_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
-        CREATE TABLE IF NOT EXISTS dataset_book_shelves (
-            book_id TEXT NOT NULL,
-            shelf TEXT NOT NULL,
-            count INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS dataset_interactions (
-            user_id_csv INTEGER NOT NULL,
-            book_id TEXT NOT NULL,
-            book_id_csv INTEGER,
-            is_read INTEGER,
-            rating INTEGER,
-            is_reviewed INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS dataset_book_id_map (
-            book_id_csv INTEGER PRIMARY KEY,
-            book_id TEXT NOT NULL
-        );
-        """
-    )
-    if conn.execute("SELECT COUNT(*) FROM dataset_book_shelves").fetchone()[0] == 0:
-        import_csv_batches(
-            conn,
-            DATASET_SHELVES_CSV,
-            """
-            INSERT INTO dataset_book_shelves(book_id,shelf,count)
-            VALUES(:book_id,:shelf,:count)
-            """,
-            lambda row: {
-                "book_id": row.get("book_id") or "",
-                "shelf": row.get("shelf") or "",
-                "count": int_or_none(row.get("count")),
-            },
-        )
-    if conn.execute("SELECT COUNT(*) FROM dataset_interactions").fetchone()[0] == 0:
-        import_csv_batches(
-            conn,
-            DATASET_INTERACTIONS_CSV,
-            """
-            INSERT INTO dataset_interactions(user_id_csv,book_id,book_id_csv,is_read,rating,is_reviewed)
-            VALUES(:user_id_csv,:book_id,:book_id_csv,:is_read,:rating,:is_reviewed)
-            """,
-            lambda row: {
-                "user_id_csv": int_or_none(row.get("user_id_csv")) or 0,
-                "book_id": row.get("book_id") or "",
-                "book_id_csv": int_or_none(row.get("book_id_csv")),
-                "is_read": int_or_none(row.get("is_read")) or 0,
-                "rating": int_or_none(row.get("rating")) or 0,
-                "is_reviewed": int_or_none(row.get("is_reviewed")) or 0,
-            },
-        )
-    if conn.execute("SELECT COUNT(*) FROM dataset_book_id_map").fetchone()[0] == 0:
-        import_csv_batches(
-            conn,
-            DATASET_ID_MAP_CSV,
-            """
-            INSERT OR REPLACE INTO dataset_book_id_map(book_id_csv,book_id)
-            VALUES(:book_id_csv,:book_id)
-            """,
-            lambda row: {
-                "book_id_csv": int_or_none(row.get("book_id_csv")),
-                "book_id": row.get("book_id") or "",
-            },
-        )
-    conn.executescript(
-        """
-        CREATE INDEX IF NOT EXISTS idx_dataset_shelves_book ON dataset_book_shelves(book_id);
-        CREATE INDEX IF NOT EXISTS idx_dataset_shelves_shelf ON dataset_book_shelves(shelf);
-        CREATE INDEX IF NOT EXISTS idx_dataset_interactions_book ON dataset_interactions(book_id);
-        CREATE INDEX IF NOT EXISTS idx_dataset_interactions_user ON dataset_interactions(user_id_csv);
-        CREATE INDEX IF NOT EXISTS idx_dataset_id_map_book ON dataset_book_id_map(book_id);
+        DROP TABLE IF EXISTS dataset_book_shelves;
+        DROP TABLE IF EXISTS dataset_interactions;
+        DROP TABLE IF EXISTS dataset_book_id_map;
         """
     )
 
@@ -465,7 +378,7 @@ def fallback_books() -> list[dict[str, Any]]:
     return books
 
 
-def init_db() -> None:
+def init_db(verbose: bool = False) -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(
@@ -515,7 +428,7 @@ def init_db() -> None:
             """
         )
         ensure_dataset_book_columns(conn)
-        ensure_dataset_auxiliary_tables(conn)
+        drop_raw_dataset_auxiliary_tables(conn)
         shelves = generate_shelves()
         conn.executemany(
             """
@@ -535,6 +448,8 @@ def init_db() -> None:
         )
         book_count = conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
         if book_count == 0:
+            if verbose:
+                print("Importing book data. First startup may take a moment...")
             books = dataset_books_from_csv(shelf_ids)
             if books:
                 base_columns = ["book_id", "source_index", "title", "author", "pages", "description", "category", "shelf_id", "shelf_slot", "status"]
@@ -574,7 +489,16 @@ def init_db() -> None:
             )
 
 
+def port_bind_error_message(port: int) -> str:
+    return (
+        f"Port {port} is already in use on 127.0.0.1:{port}.\n"
+        f"Close the program using that port, or start this app with another port, for example: PORT={port + 1} ./start_server.command"
+    )
+
+
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return dict(row)
     return {key: row[key] for key in row.keys()}
 
 
@@ -1198,6 +1122,17 @@ def book_text(row: sqlite3.Row | dict[str, Any]) -> str:
     )
 
 
+def value_from_row(row: sqlite3.Row | dict[str, Any], key: str) -> Any:
+    return row.get(key, "") if isinstance(row, dict) else row[key] if key in row.keys() else ""
+
+
+def profile_book_text(row: sqlite3.Row | dict[str, Any]) -> str:
+    keys = ("title", "original_title", "author", "category", "genres", "publisher")
+    parts = [str(value_from_row(row, key) or "") for key in keys]
+    parts.extend(name for name, _ in split_shelf_terms(str(value_from_row(row, "top_shelves") or "")))
+    return " ".join(parts)
+
+
 def tokenize(text: str) -> list[str]:
     # English words/numbers and Chinese phrases are both useful in this dataset.
     return [
@@ -1205,6 +1140,12 @@ def tokenize(text: str) -> list[str]:
         for token in re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", text)
         if len(token.strip()) >= 2
     ]
+
+
+def is_profile_keyword(term: str) -> bool:
+    if not term or term.isdigit():
+        return False
+    return any(char.isalpha() or "\u4e00" <= char <= "\u9fff" for char in term)
 
 
 def tfidf_vectors(rows: list[sqlite3.Row]) -> tuple[list[dict[str, float]], dict[str, float]]:
@@ -1254,7 +1195,7 @@ def user_interest_vector(
     for row in history:
         weighted_terms.update({token: 3 for token in tokenize(row["keyword"])})
     for row in favorites:
-        weighted_terms.update({token: 2 for token in tokenize(book_text(row))})
+        weighted_terms.update({token: 2 for token in tokenize(profile_book_text(row))})
 
     vector = {
         token: count * idf.get(token, 1.0)
@@ -1285,13 +1226,16 @@ def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | Non
     favs = favorite_rows(conn, user_id)
     if not history and not favs:
         return []
-    rows = conn.execute("SELECT b.*, s.row, s.col FROM books b JOIN shelves s ON b.shelf_id=s.id").fetchall()
-    _, idf = tfidf_vectors(rows)
+    rows, _, idf = cached_book_vectors(conn)
     profile = user_interest_vector(history, favs, idf)
-    return [
-        {"term": term, "weight": round(weight, 4)}
-        for term, weight in sorted(profile.items(), key=lambda item: item[1], reverse=True)[:limit]
-    ]
+    keywords = []
+    for term, weight in sorted(profile.items(), key=lambda item: item[1], reverse=True):
+        if not is_profile_keyword(term):
+            continue
+        keywords.append({"term": term, "weight": round(weight, 4)})
+        if len(keywords) >= limit:
+            break
+    return keywords
 
 
 def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1302,199 +1246,275 @@ def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, 
     return enriched
 
 
+def load_recommender_model() -> dict[str, Any]:
+    path = RECOMMENDER_MODEL_PATH
+    if not path.exists():
+        return {"available": False, "path": str(path), "reason": "model_file_missing"}
+    mtime = path.stat().st_mtime
+    cache_key = str(path)
+    if RECOMMENDER_MODEL_CACHE.get("path") == cache_key and RECOMMENDER_MODEL_CACHE.get("mtime") == mtime:
+        return RECOMMENDER_MODEL_CACHE["status"]
+    try:
+        import joblib
+
+        model = joblib.load(path)
+    except Exception as exc:
+        status = {"available": False, "path": str(path), "reason": f"load_failed: {exc}"}
+        RECOMMENDER_MODEL_CACHE.clear()
+        RECOMMENDER_MODEL_CACHE.update({"path": cache_key, "mtime": mtime, "status": status})
+        return status
+
+    metadata = dict(model.get("metadata") or {})
+    status = {
+        "available": True,
+        "path": str(path),
+        "algorithm": metadata.get("algorithm", "truncated_svd_collaborative_filtering"),
+        "bookCount": metadata.get("book_count"),
+        "userCount": metadata.get("user_count"),
+        "interactionCount": metadata.get("interaction_count"),
+        "embeddingDim": metadata.get("embedding_dim"),
+        "model": model,
+    }
+    RECOMMENDER_MODEL_CACHE.clear()
+    RECOMMENDER_MODEL_CACHE.update({"path": cache_key, "mtime": mtime, "status": status})
+    return status
+
+
+def public_model_status(status: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in status.items() if key != "model"}
+
+
 def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit: int) -> dict[str, Any]:
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall() if user_id else []
     favs = favorite_rows(conn, user_id) if user_id else []
     profile = recommendation_profile_keywords(conn, user_id)
+    status = load_recommender_model()
     books = enrich_recommendation_scores(recommendations(conn, user_id, limit))
     return {
         "profileKeywords": profile,
         "preferredGenres": preferred_genres(favs, history),
-        "modelWeights": HYBRID_WEIGHTS,
-        "summary": "Hybrid 推荐：内容画像 + Goodreads 交互协同 + 热门质量综合评分。",
+        "modelStatus": public_model_status(status),
+        "summary": "机器学习推荐：离线 SVD 协同过滤模型 + 内容冷启动；模型不可用时使用热门高评分兜底。",
         "books": books,
     }
 
 
-def candidate_book_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute(
+def candidate_book_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [
+        row_to_dict(row)
+        for row in conn.execute(
         """
         SELECT b.*, s.row, s.col
         FROM books b JOIN shelves s ON b.shelf_id=s.id
         """
-    ).fetchall()
+        ).fetchall()
+    ]
+
+
+def cached_book_vectors(conn: sqlite3.Connection) -> tuple[list[dict[str, Any]], list[dict[str, float]], dict[str, float]]:
+    key = str(DB_PATH)
+    if BOOK_VECTOR_CACHE.get("key") != key:
+        rows = candidate_book_rows(conn)
+        vectors, idf = tfidf_vectors(rows)
+        BOOK_VECTOR_CACHE.clear()
+        BOOK_VECTOR_CACHE.update({"key": key, "rows": rows, "vectors": vectors, "idf": idf})
+    return BOOK_VECTOR_CACHE["rows"], BOOK_VECTOR_CACHE["vectors"], BOOK_VECTOR_CACHE["idf"]
 
 
 def popularity_scores(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    global POPULARITY_CACHE
+    if POPULARITY_CACHE is not None and POPULARITY_CACHE.get("__db_key", {}).get("score") == str(DB_PATH):
+        return {key: value for key, value in POPULARITY_CACHE.items() if key != "__db_key"}
     rows = conn.execute(
         """
         SELECT
             b.book_id,
             COALESCE(b.average_rating, 0) average_rating,
-            COALESCE(b.ratings_count, 0) ratings_count,
-            COUNT(di.user_id_csv) interaction_count,
-            AVG(NULLIF(di.rating, 0)) interaction_rating
+            COALESCE(b.ratings_count, 0) ratings_count
         FROM books b
-        LEFT JOIN dataset_interactions di ON di.book_id=b.book_id
-        GROUP BY b.book_id
         """
     ).fetchall()
     max_ratings = max((row["ratings_count"] for row in rows), default=1) or 1
-    max_interactions = max((row["interaction_count"] for row in rows), default=1) or 1
     scores: dict[str, dict[str, float]] = {}
     for row in rows:
         rating_score = min(float(row["average_rating"] or 0) / 5.0, 1.0)
         ratings_count_score = math.log1p(float(row["ratings_count"] or 0)) / math.log1p(float(max_ratings))
-        interaction_count_score = math.log1p(float(row["interaction_count"] or 0)) / math.log1p(float(max_interactions))
-        interaction_rating_score = min(float(row["interaction_rating"] or 0) / 5.0, 1.0)
-        score = rating_score * 0.35 + ratings_count_score * 0.3 + interaction_count_score * 0.2 + interaction_rating_score * 0.15
+        score = rating_score * 0.55 + ratings_count_score * 0.45
         scores[row["book_id"]] = {
             "score": round(score, 4),
             "rating": round(rating_score, 4),
             "ratings_count": round(ratings_count_score, 4),
-            "interaction_count": round(interaction_count_score, 4),
-            "interaction_rating": round(interaction_rating_score, 4),
         }
+    POPULARITY_CACHE = scores | {"__db_key": {"score": str(DB_PATH)}}
     return scores
 
 
-def collaborative_scores(conn: sqlite3.Connection, favorites: list[sqlite3.Row]) -> dict[str, float]:
-    favorite_book_ids = [str(row["book_id"]) for row in favorites if row["book_id"]]
-    if not favorite_book_ids:
-        return {}
-    placeholders = ",".join("?" for _ in favorite_book_ids)
-    similar_users = conn.execute(
-        f"""
-        SELECT user_id_csv,
-               SUM(CASE WHEN rating >= 4 THEN 3 ELSE 0 END + is_read + is_reviewed) affinity
-        FROM dataset_interactions
-        WHERE book_id IN ({placeholders})
-        GROUP BY user_id_csv
-        HAVING affinity > 0
-        ORDER BY affinity DESC
-        LIMIT 500
-        """,
-        favorite_book_ids,
-    ).fetchall()
-    if not similar_users:
-        return {}
-    user_ids = [row["user_id_csv"] for row in similar_users]
-    user_weights = {row["user_id_csv"]: float(row["affinity"] or 1) for row in similar_users}
-    user_placeholders = ",".join("?" for _ in user_ids)
-    fav_placeholders = ",".join("?" for _ in favorite_book_ids)
+def user_recommendation_signature(conn: sqlite3.Connection, user_id: int | None, limit: int) -> tuple[Any, ...]:
+    model_mtime = RECOMMENDER_MODEL_PATH.stat().st_mtime if RECOMMENDER_MODEL_PATH.exists() else 0
+    if not user_id:
+        return (str(DB_PATH), "anonymous", limit, str(RECOMMENDER_MODEL_PATH), model_mtime)
+    fav = conn.execute(
+        "SELECT COUNT(*) count, COALESCE(MAX(id), 0) latest FROM favorites WHERE user_id=?",
+        (user_id,),
+    ).fetchone()
+    history = conn.execute(
+        "SELECT COUNT(*) count, COALESCE(MAX(id), 0) latest FROM search_history WHERE user_id=?",
+        (user_id,),
+    ).fetchone()
+    return (
+        str(DB_PATH),
+        user_id,
+        limit,
+        fav["count"],
+        fav["latest"],
+        history["count"],
+        history["latest"],
+        str(RECOMMENDER_MODEL_PATH),
+        model_mtime,
+    )
+
+
+def clamp_score(value: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
+    return round(max(0.0, min(1.0, value)), 4)
+
+
+def book_rows_by_book_id(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    return {str(row["book_id"]): row for row in candidate_book_rows(conn)}
+
+
+def scored_item(row: dict[str, Any], score: float, method: str, reason: str) -> dict[str, Any]:
+    item = row_to_dict(row)
+    item["recommendation_method"] = method
+    item["reason"] = reason
+    item["ml_score"] = clamp_score(score)
+    item["is_favorite"] = False
+    return item
+
+
+def svd_recommendations(
+    model: dict[str, Any],
+    book_rows: dict[str, dict[str, Any]],
+    favorites: list[sqlite3.Row],
+    limit: int,
+) -> list[dict[str, Any]]:
+    try:
+        import numpy as np
+    except Exception:
+        return []
+
+    book_id_to_index = model.get("book_id_to_index") or {}
+    book_ids = model.get("book_ids") or []
+    item_factors = model.get("item_factors")
+    favorite_book_ids = {str(row["book_id"]) for row in favorites if row["book_id"]}
+    favorite_indices = [book_id_to_index[book_id] for book_id in favorite_book_ids if book_id in book_id_to_index]
+    if item_factors is None or not favorite_indices:
+        return []
+    user_vector = np.asarray(item_factors[favorite_indices]).mean(axis=0)
+    norm = float(np.linalg.norm(user_vector))
+    if norm <= 0:
+        return []
+    user_vector = user_vector / norm
+    with np.errstate(all="ignore"):
+        scores = np.asarray(item_factors @ user_vector).reshape(-1)
+    ranked = []
+    for index, score in enumerate(scores):
+        book_id = str(book_ids[index])
+        if book_id in favorite_book_ids or book_id not in book_rows:
+            continue
+        normalized_score = clamp_score((float(score) + 1.0) / 2.0)
+        if normalized_score <= 0:
+            continue
+        ranked.append((normalized_score, book_id))
+    ranked.sort(reverse=True, key=lambda item: item[0])
+    return [
+        scored_item(book_rows[book_id], score, "svd_collaborative_filtering", "机器学习推荐：与你收藏图书的协同过滤向量相似。")
+        for score, book_id in ranked[:limit]
+    ]
+
+
+def content_cold_start_recommendations(
+    model: dict[str, Any],
+    book_rows: dict[str, dict[str, Any]],
+    history: list[sqlite3.Row],
+    favorites: list[sqlite3.Row],
+    limit: int,
+) -> list[dict[str, Any]]:
+    query = " ".join(row["keyword"] for row in history if row["keyword"]).strip()
+    if not query:
+        return []
+    vectorizer = model.get("tfidf_vectorizer")
+    content_matrix = model.get("content_matrix")
+    book_ids = model.get("book_ids") or []
+    if vectorizer is None or content_matrix is None:
+        return []
+    favorite_book_ids = {str(row["book_id"]) for row in favorites if row["book_id"]}
+    query_vector = vectorizer.transform([query])
+    scores = (content_matrix @ query_vector.T).toarray().ravel()
+    ranked = []
+    for index, score in enumerate(scores):
+        book_id = str(book_ids[index])
+        if book_id in favorite_book_ids or book_id not in book_rows:
+            continue
+        normalized_score = clamp_score(float(score))
+        if normalized_score <= 0:
+            continue
+        ranked.append((normalized_score, book_id))
+    ranked.sort(reverse=True, key=lambda item: item[0])
+    return [
+        scored_item(book_rows[book_id], score, "content_cold_start", "机器学习推荐：根据最近搜索词匹配图书内容特征。")
+        for score, book_id in ranked[:limit]
+    ]
+
+
+def popularity_fallback_recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int, reason: str) -> list[dict[str, Any]]:
     rows = conn.execute(
-        f"""
-        SELECT book_id, user_id_csv, rating, is_read, is_reviewed
-        FROM dataset_interactions
-        WHERE user_id_csv IN ({user_placeholders})
-          AND book_id NOT IN ({fav_placeholders})
-          AND (rating >= 4 OR is_read=1 OR is_reviewed=1)
+        """
+        SELECT b.*, s.row, s.col
+        FROM books b JOIN shelves s ON b.shelf_id=s.id
+        ORDER BY COALESCE(b.average_rating, 0) DESC, COALESCE(b.ratings_count, 0) DESC
+        LIMIT ?
         """,
-        [*user_ids, *favorite_book_ids],
+        (limit,),
     ).fetchall()
-    raw_scores: Counter[str] = Counter()
-    for row in rows:
-        interaction_strength = (float(row["rating"] or 0) / 5.0) + (0.25 if row["is_read"] else 0.0) + (0.2 if row["is_reviewed"] else 0.0)
-        raw_scores[str(row["book_id"])] += interaction_strength * user_weights.get(row["user_id_csv"], 1.0)
-    max_score = max(raw_scores.values(), default=0.0)
-    if max_score <= 0:
-        return {}
-    return {book_id: round(score / max_score, 4) for book_id, score in raw_scores.items()}
-
-
-def series_key(title: str | None) -> str:
-    text = re.sub(r"\([^)]*\)", "", title or "").strip().lower()
-    return re.sub(r"[^a-z0-9]+", " ", text).strip()
-
-
-def novelty_score(row: sqlite3.Row, favorites: list[sqlite3.Row]) -> float:
-    if not favorites:
-        return 1.0
-    current = series_key(row["title"])
-    if current and any(current == series_key(fav["title"]) for fav in favorites):
-        return 0.35
-    if row["author"] and any(row["author"] == fav["author"] for fav in favorites):
-        return 0.75
-    return 1.0
-
-
-def recommendation_reason(breakdown: dict[str, float], row: sqlite3.Row) -> str:
-    drivers = sorted(breakdown.items(), key=lambda item: item[1] * HYBRID_WEIGHTS.get(item[0], 0.0), reverse=True)
-    top = [name for name, value in drivers if value > 0][:2]
-    labels = {
-        "content": "用户画像相似",
-        "collaborative": "相似读者互动较强",
-        "popularity": "评分与热度较高",
-        "novelty": "保留一定新颖度",
-    }
-    if not top:
-        return f"综合推荐：{row['category'] or 'metadata'} 方向的候选书。"
-    return "综合推荐：" + "，".join(labels[name] for name in top) + "。"
+    popularity = popularity_scores(conn)
+    result = []
+    for item in mark_favorites(conn, rows, user_id):
+        book_id = str(item.get("book_id"))
+        item["reason"] = reason
+        item["recommendation_method"] = "popularity_fallback"
+        item["ml_score"] = popularity.get(book_id, {}).get("score", 0.0)
+        result.append(item)
+    return result
 
 
 def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -> list[dict[str, Any]]:
+    cache_key = user_recommendation_signature(conn, user_id, limit)
+    if cache_key in RECOMMENDATION_CACHE:
+        return [dict(item) for item in RECOMMENDATION_CACHE[cache_key]]
     if not user_id:
-        rows = conn.execute(
-            """
-            SELECT b.*, s.row, s.col
-            FROM books b JOIN shelves s ON b.shelf_id=s.id
-            ORDER BY COALESCE(b.average_rating, 0) DESC, COALESCE(b.ratings_count, 0) DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        return [item | {"reason": "登录后可根据收藏和搜索历史生成画像推荐", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
+        result = popularity_fallback_recommendations(conn, user_id, limit, "登录后可根据收藏和搜索历史生成机器学习推荐。")
+        RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
+        return result
 
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
     favs = favorite_rows(conn, user_id)
+    status = load_recommender_model()
+    if not status.get("available"):
+        result = popularity_fallback_recommendations(conn, user_id, limit, "模型尚未训练，暂时显示热门高评分馆藏。")
+        RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
+        return result
 
-    rows = candidate_book_rows(conn)
-    favorite_ids = {fav["id"] for fav in favs}
-    candidate_rows = [row for row in rows if row["id"] not in favorite_ids]
-    popularity = popularity_scores(conn)
-    collaborative = collaborative_scores(conn, favs)
-
-    content_scores: dict[int, float] = {}
-    if history or favs:
-        all_vectors, idf = tfidf_vectors(rows)
-        vector_by_id = {row["id"]: vector for row, vector in zip(rows, all_vectors)}
-        profile = user_interest_vector(history, favs, idf)
-        for row in candidate_rows:
-            content_scores[row["id"]] = cosine_similarity(profile, vector_by_id.get(row["id"], {}))
-
-    scored = []
-    for row in candidate_rows:
-        book_id = str(row["book_id"])
-        breakdown = {
-            "content": round(content_scores.get(row["id"], 0.0), 4),
-            "collaborative": collaborative.get(book_id, 0.0),
-            "popularity": popularity.get(book_id, {}).get("score", 0.0),
-            "novelty": round(novelty_score(row, favs), 4),
-        }
-        score = sum(HYBRID_WEIGHTS[key] * breakdown[key] for key in HYBRID_WEIGHTS)
-        if score > 0:
-            item = row_to_dict(row)
-            item["score_breakdown"] = breakdown
-            item["popularity_detail"] = popularity.get(book_id, {})
-            item["reason"] = recommendation_reason(breakdown, row)
-            item["recommendation_method"] = "hybrid_recommendation"
-            item["ml_score"] = round(score, 4)
-            item["is_favorite"] = False
-            scored.append((score, row["id"], item))
-
-    if not scored:
-        rows = conn.execute(
-            """
-            SELECT b.*, s.row, s.col
-            FROM books b JOIN shelves s ON b.shelf_id=s.id
-            ORDER BY COALESCE(b.average_rating, 0) DESC, COALESCE(b.ratings_count, 0) DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        return [item | {"reason": "暂无足够历史，显示热门高评分馆藏", "recommendation_method": "fallback"} for item in mark_favorites(conn, rows, user_id)]
-    scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
-    return [item[2] for item in scored[:limit]]
+    model = status["model"]
+    book_rows = book_rows_by_book_id(conn)
+    result = svd_recommendations(model, book_rows, favs, limit) if favs else []
+    if not result:
+        result = content_cold_start_recommendations(model, book_rows, history, favs, limit)
+    if not result:
+        result = popularity_fallback_recommendations(conn, user_id, limit, "暂无足够用户信号，显示热门高评分馆藏。")
+    RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
+    return result
 
 
 def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, end: tuple[int, int] = DEFAULT_SEAT) -> dict[str, Any]:
@@ -2004,9 +2024,15 @@ def plan_pickup_with_order(
 
 
 def main() -> None:
-    init_db()
+    print("Checking and preparing the local database...")
+    init_db(verbose=True)
+    print("Database is ready.")
     port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        print(port_bind_error_message(port))
+        raise SystemExit(1) from exc
     print(f"Library borrowing system running at http://127.0.0.1:{port}")
     server.serve_forever()
 
