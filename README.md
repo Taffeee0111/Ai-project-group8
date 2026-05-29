@@ -8,8 +8,8 @@
 
 - 注册和登录。
 - 登录后可修改密码。
-- 搜索 `book_collection_filled_1500.docx` 中的 1500 本图书。
-- 根据搜索历史和收藏记录生成推荐，推荐系统使用 TF-IDF 向量化和 cosine similarity。
+- 搜索 Goodreads 10k 数据集中的 10000 本图书，并支持 genre、出版社、年份、评分等高级筛选。
+- 根据搜索历史、收藏记录、图书元数据、Goodreads 交互数据和热门度生成可解释混合推荐。
 - 收藏图书并在个人中心查看。
 - 在取书界面构建“本次取书”任务篮，可从“我的收藏”或搜索结果中直接加入图书。
 - 基于 `30 * 30` 图书馆地图规划路线：入口出发，经过目标书架，最终到用户选择的阅读区座位。
@@ -20,45 +20,50 @@
 
 ## 数据
 
-系统首次启动时会从项目目录读取：
+项目提交的是原始数据集 CSV，不提交本地 SQLite 数据库：
 
 ```text
-backend/data/book_collection_filled_1500.docx
+backend/data/dataset/books_10k.csv
+backend/data/dataset/book_shelves_10k.csv
+backend/data/dataset/interactions_10k.csv
+backend/data/dataset/book_id_map_10k.csv
 ```
 
-如果文件存在，会自动导入 1500 本图书。如果文件不存在，会使用一组演示数据，方便系统仍然可以运行。
-
-后端使用 `backend/server.py` 所在位置推导项目根目录，因此移动整个项目文件夹后，仍会读取项目内的 `backend/data/book_collection_filled_1500.docx`，不会依赖某台电脑上的个人绝对路径。
-
-当前地图根据代码中的 `SHELF_GROUPS` 生成 `248` 个书架格。1500 本图书会循环映射到这些实际书架上，不再强行假设 300 个书架或每个书架固定 5 本书。
-
-数据库文件位于：
+首次启动后端时，`backend/server.py` 会自动创建本机数据库：
 
 ```text
 backend/data/library.db
 ```
 
-如果数据库中已经存在图书，启动时会保留图书记录，并按当前书架布局刷新图书对应的 `shelf_id` 和 `shelf_slot`。
+`library.db` 是生成产物，已被 `.gitignore` 忽略。它不需要、也不应该提交到远程仓库。数据库不存在时，`init_db()` 会创建表结构，并从上面的 CSV 导入 10000 本书、书架标签、Goodreads 交互记录和 ID 映射；数据库已存在时，启动会保留用户、收藏和历史记录，并做幂等迁移和元数据补齐。
+
+后端使用 `backend/server.py` 所在位置推导项目根目录，因此移动整个项目文件夹后，仍会读取项目内的 `backend/data/dataset/`，不会依赖某台电脑上的个人绝对路径。
+
+当前地图根据代码中的 `SHELF_GROUPS` 生成 `248` 个书架格。10000 本图书会循环映射到这些实际书架上，并保留取书路径规划所需的 `shelf_id` 和 `shelf_slot`。
 
 ## 启动
 
 使用 Python 运行：
 
-```powershell
-python backend/server.py
+```bash
+python3 backend/server.py
 ```
 
-如果使用 Codex bundled Python：
-
-```powershell
-& 'C:\Users\Lenovo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' backend/server.py
-```
-
-启动后访问：
+第一次启动会生成 `backend/data/library.db`，导入 Goodreads 数据集可能需要等待几秒。启动后访问：
 
 ```text
 http://127.0.0.1:8000
 ```
+
+不要直接双击打开 `frontend/static/index.html`，否则浏览器只会打开静态文件，无法调用后端 API。
+
+如果需要重新生成数据库，先停止后端服务，然后删除：
+
+```text
+backend/data/library.db
+```
+
+再重新运行 `python3 backend/server.py` 即可。
 
 演示账号：
 
@@ -106,8 +111,12 @@ password: demo123
 backend/
   server.py              # HTTP API、SQLite 初始化、推荐、地图和路径算法
   data/
-    book_collection_filled_1500.docx
-    library.db
+    dataset/
+      books_10k.csv
+      book_shelves_10k.csv
+      interactions_10k.csv
+      book_id_map_10k.csv
+    library.db           # 本地自动生成，Git 不跟踪
 frontend/
   static/
     index.html

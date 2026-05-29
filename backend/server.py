@@ -26,6 +26,10 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend" / "static"
 BOOK_DOCX = DATA_DIR / "book_collection_filled_1500.docx"
 DATASET_DIR = DATA_DIR / "dataset"
 DATASET_BOOKS_CSV = DATASET_DIR / "books_10k.csv"
+DATASET_SHELVES_CSV = DATASET_DIR / "book_shelves_10k.csv"
+DATASET_INTERACTIONS_CSV = DATASET_DIR / "interactions_10k.csv"
+DATASET_ID_MAP_CSV = DATASET_DIR / "book_id_map_10k.csv"
+DATASET_IMPORT_BATCH_SIZE = 5000
 
 TOKENS: dict[str, int] = {}
 AUTH_SECRET = "algorithm-ai-library-auth"
@@ -278,6 +282,103 @@ def hydrate_dataset_book_metadata(conn: sqlite3.Connection) -> None:
     conn.executemany(f"UPDATE books SET {assignments} WHERE book_id=:book_id", rows)
 
 
+def import_csv_batches(
+    conn: sqlite3.Connection,
+    path: Path,
+    sql: str,
+    row_builder,
+    batch_size: int = DATASET_IMPORT_BATCH_SIZE,
+) -> None:
+    if not path.exists():
+        return
+    batch = []
+    with path.open(newline="", encoding="utf-8") as file:
+        for row in csv.DictReader(file):
+            batch.append(row_builder(row))
+            if len(batch) >= batch_size:
+                conn.executemany(sql, batch)
+                batch.clear()
+    if batch:
+        conn.executemany(sql, batch)
+
+
+def ensure_dataset_auxiliary_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_book_shelves (
+            book_id TEXT NOT NULL,
+            shelf TEXT NOT NULL,
+            count INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS dataset_interactions (
+            user_id_csv INTEGER NOT NULL,
+            book_id TEXT NOT NULL,
+            book_id_csv INTEGER,
+            is_read INTEGER,
+            rating INTEGER,
+            is_reviewed INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS dataset_book_id_map (
+            book_id_csv INTEGER PRIMARY KEY,
+            book_id TEXT NOT NULL
+        );
+        """
+    )
+    if conn.execute("SELECT COUNT(*) FROM dataset_book_shelves").fetchone()[0] == 0:
+        import_csv_batches(
+            conn,
+            DATASET_SHELVES_CSV,
+            """
+            INSERT INTO dataset_book_shelves(book_id,shelf,count)
+            VALUES(:book_id,:shelf,:count)
+            """,
+            lambda row: {
+                "book_id": row.get("book_id") or "",
+                "shelf": row.get("shelf") or "",
+                "count": int_or_none(row.get("count")),
+            },
+        )
+    if conn.execute("SELECT COUNT(*) FROM dataset_interactions").fetchone()[0] == 0:
+        import_csv_batches(
+            conn,
+            DATASET_INTERACTIONS_CSV,
+            """
+            INSERT INTO dataset_interactions(user_id_csv,book_id,book_id_csv,is_read,rating,is_reviewed)
+            VALUES(:user_id_csv,:book_id,:book_id_csv,:is_read,:rating,:is_reviewed)
+            """,
+            lambda row: {
+                "user_id_csv": int_or_none(row.get("user_id_csv")) or 0,
+                "book_id": row.get("book_id") or "",
+                "book_id_csv": int_or_none(row.get("book_id_csv")),
+                "is_read": int_or_none(row.get("is_read")) or 0,
+                "rating": int_or_none(row.get("rating")) or 0,
+                "is_reviewed": int_or_none(row.get("is_reviewed")) or 0,
+            },
+        )
+    if conn.execute("SELECT COUNT(*) FROM dataset_book_id_map").fetchone()[0] == 0:
+        import_csv_batches(
+            conn,
+            DATASET_ID_MAP_CSV,
+            """
+            INSERT OR REPLACE INTO dataset_book_id_map(book_id_csv,book_id)
+            VALUES(:book_id_csv,:book_id)
+            """,
+            lambda row: {
+                "book_id_csv": int_or_none(row.get("book_id_csv")),
+                "book_id": row.get("book_id") or "",
+            },
+        )
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dataset_shelves_book ON dataset_book_shelves(book_id);
+        CREATE INDEX IF NOT EXISTS idx_dataset_shelves_shelf ON dataset_book_shelves(shelf);
+        CREATE INDEX IF NOT EXISTS idx_dataset_interactions_book ON dataset_interactions(book_id);
+        CREATE INDEX IF NOT EXISTS idx_dataset_interactions_user ON dataset_interactions(user_id_csv);
+        CREATE INDEX IF NOT EXISTS idx_dataset_id_map_book ON dataset_book_id_map(book_id);
+        """
+    )
+
+
 def generate_shelves() -> list[tuple[str, int, int, str]]:
     positions = []
     seen = set()
@@ -414,6 +515,7 @@ def init_db() -> None:
             """
         )
         ensure_dataset_book_columns(conn)
+        ensure_dataset_auxiliary_tables(conn)
         shelves = generate_shelves()
         conn.executemany(
             """

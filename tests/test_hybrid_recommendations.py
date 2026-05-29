@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 import tempfile
 import unittest
@@ -14,24 +13,29 @@ import backend.server as server
 
 
 class HybridRecommendationTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tempdir.name) / "library.db"
-        shutil.copy2(PROJECT_ROOT / "backend" / "data" / "library.db", self.db_path)
-        self.original_db_path = server.DB_PATH
-        server.DB_PATH = self.db_path
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tempdir = tempfile.TemporaryDirectory()
+        cls.db_path = Path(cls.tempdir.name) / "library.db"
+        cls.original_db_path = server.DB_PATH
+        server.DB_PATH = cls.db_path
         server.init_db()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        server.DB_PATH = cls.original_db_path
+        cls.tempdir.cleanup()
+
+    def setUp(self) -> None:
         self.conn = server.connect()
         self.user_id = self.conn.execute(
             "INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)",
-            ("hybrid-user", server.hash_password("secret123"), server.now()),
+            (f"hybrid-user-{self._testMethodName}", server.hash_password("secret123"), server.now()),
         ).lastrowid
         self.conn.commit()
 
     def tearDown(self) -> None:
         self.conn.close()
-        server.DB_PATH = self.original_db_path
-        self.tempdir.cleanup()
 
     def test_analysis_exposes_hybrid_model_metadata(self) -> None:
         self.conn.execute(

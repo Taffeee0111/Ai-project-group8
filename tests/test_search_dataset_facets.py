@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import sys
 import tempfile
 import urllib.parse
@@ -22,7 +21,6 @@ class SearchDatasetFacetsTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tempdir = tempfile.TemporaryDirectory()
         cls.db_path = Path(cls.tempdir.name) / "library.db"
-        shutil.copy2(PROJECT_ROOT / "backend" / "data" / "library.db", cls.db_path)
         cls.original_db_path = server.DB_PATH
         server.DB_PATH = cls.db_path
         server.init_db()
@@ -57,6 +55,13 @@ class SearchDatasetFacetsTest(unittest.TestCase):
         self.assertNotIn("shelfTags", facets)
         self.assertNotIn("languages", facets)
         self.assertNotIn("formats", facets)
+
+    def test_fresh_database_imports_dataset_auxiliary_tables(self) -> None:
+        with server.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM books").fetchone()[0], 10000)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_book_shelves").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_interactions").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM dataset_book_id_map").fetchone()[0], 0)
 
     def test_search_matches_publisher_and_returns_dataset_metadata(self) -> None:
         rows = self.fetch_json("/api/books/search?keyword=Scholastic&record=0")
