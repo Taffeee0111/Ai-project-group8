@@ -15,7 +15,7 @@
 - 基于 `30 * 30` 图书馆地图规划路线：入口出发，经过目标书架，最终到用户选择的阅读区座位。
 - 地图包含书架、阅读区、拥堵区和入口；书架与阅读区不可穿过，拥堵区可通行但每步代价为 2。
 - 支持 BFS、Uniform Cost Search、A* 曼哈顿和 A* 欧几里得作为底层两点路径搜索策略。
-- 支持贪心最近邻和贪心 + 2-opt 作为多本书访问顺序求解方式，并可开启 CSP 约束传播来合并同取书点、批处理同点任务、减少路径查询和候选转移。
+- 支持贪心最近邻和贪心 + 2-opt 作为多本书访问顺序求解方式。
 - 前端提供地图可视化、路径播放、步骤高亮、放大地图弹窗和算法指标展示。
 
 ## 数据
@@ -164,12 +164,11 @@ password: demo123
   "bookIds": [1, 2, 3],
   "algorithm": "astar_manhattan",
   "method": "greedy",
-  "end": [10, 10],
-  "constraintsEnabled": false
+  "end": [10, 10]
 }
 ```
 
-其中 `algorithm` 可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`；`method` 可选 `greedy`、`greedy_2opt`；`end` 是用户在绿色阅读区选择的最终座位坐标；`constraintsEnabled` 为可选布尔值，开启后会先执行 CSP 约束削减再规划路线。
+其中 `algorithm` 可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`；`method` 可选 `greedy`、`greedy_2opt`；`end` 是用户在绿色阅读区选择的最终座位坐标。
 
 ## 项目结构
 

@@ -1255,7 +1255,6 @@ async function planPath(options = {}) {
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "";
-  const useConstraints = constraintsEnabled();
   if (!algorithm || !method) {
     openNotice("需要先选择两点路径算法和整体取书算法。", "需要选择算法");
     resetPathMetrics();
@@ -1268,7 +1267,7 @@ async function planPath(options = {}) {
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
-      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat, constraintsEnabled: useConstraints }),
+      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat }),
     });
     if (requestId !== state.planRequestId) return;
   } catch (err) {
@@ -1301,22 +1300,13 @@ async function planPath(options = {}) {
   state.playbackStartProgress = 0;
   const pathAlgorithm = selectedOptionText("#algorithmSelect", result.algorithm.toUpperCase());
   const orderAlgorithm = selectedOptionText("#solverSelect", String(result.method || method).toUpperCase());
-  const statsSummary = constraintStatsSummary(result.constraintStats);
-  const cspTime = cspRuntimeText(result);
-  const pathTime = pathRuntimeText(result);
-  const timingRows = timingMetricsHtml(cspTime, pathTime);
-  const querySummary = pathQuerySummary(result);
   qs("#pathMetrics").classList.remove("analysis-empty");
   qs("#pathMetrics").innerHTML = `
     <section class="analysis-group">
       <div class="metric-row"><span>总代价</span><strong>${result.distance}</strong></div>
       <div class="metric-row"><span>两点算法</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
       <div class="metric-row"><span>整体算法</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
-      ${timingRows}
-      ${statsSummary ? `<div class="metric-row"><span>CSP 削减</span><strong>${escapeHtml(statsSummary)}</strong></div>` : ""}
-      ${querySummary ? `<div class="metric-row"><span>路径查询</span><strong>${escapeHtml(querySummary)}</strong></div>` : ""}
       ${result.pathExpanded != null ? `<div class="metric-row"><span>底层路径扩展</span><strong>${result.pathExpanded}</strong></div>` : ""}
-      ${result.precomputeExpanded != null ? `<div class="metric-row"><span>预计算扩展</span><strong>${result.precomputeExpanded}</strong></div>` : ""}
       ${result.solverExpanded != null ? `<div class="metric-row"><span>整体规划扩展</span><strong>${result.solverExpanded}</strong></div>` : ""}
       <div class="metric-row"><span>运行时间</span><strong>${result.runtimeMs} ms</strong></div>
     </section>
@@ -1328,74 +1318,6 @@ async function planPath(options = {}) {
 
 function compareLabel(list, value) {
   return list.find(([key]) => key === value)?.[1] || value;
-}
-
-function constraintsEnabled() {
-  return Boolean(qs("#constraintsToggle")?.checked);
-}
-
-function formatMetricNumber(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return value;
-  return Number.isInteger(number) ? String(number) : number.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function timingMetricsHtml(cspTime, pathTime) {
-  return `
-      <div class="metric-row timing-metric-row" data-metric="csp-runtime"><span>约束传播耗时</span><strong>${escapeHtml(cspTime)}</strong></div>
-      <div class="metric-row timing-metric-row" data-metric="path-runtime"><span>路径算法耗时</span><strong>${escapeHtml(pathTime)}</strong></div>`;
-}
-
-function firstFiniteMetric(...values) {
-  for (const value of values) {
-    const number = Number(value);
-    if (Number.isFinite(number)) return number;
-  }
-  return null;
-}
-
-function sumSegmentRuntime(result) {
-  const segments = Array.isArray(result.segments) ? result.segments : [];
-  const total = segments.reduce((sum, segment) => {
-    const value = Number(segment.runtimeMs);
-    return Number.isFinite(value) ? sum + value : sum;
-  }, 0);
-  return total > 0 ? total : null;
-}
-
-function cspRuntimeText(result) {
-  if (!result.constraintsEnabled) return "无";
-  const value = firstFiniteMetric(result.cspRuntimeMs, result.constraintStats?.cspRuntimeMs);
-  return `${formatMetricNumber(value ?? 0)} ms`;
-}
-
-function pathRuntimeText(result) {
-  const value = firstFiniteMetric(
-    result.pathSearchRuntimeMs,
-    result.constraintStats?.pathSearchRuntimeMs,
-    result.precomputeRuntimeMs,
-    sumSegmentRuntime(result),
-    result.runtimeMs
-  );
-  return value == null ? "-" : `${formatMetricNumber(value)} ms`;
-}
-
-function pathQuerySummary(result) {
-  const stats = result.constraintStats || {};
-  if (stats.pathQueriesExecuted == null && stats.pathQueriesBaseline == null) return "";
-  const executed = stats.pathQueriesExecuted == null ? "-" : stats.pathQueriesExecuted;
-  const baseline = stats.pathQueriesBaseline == null ? "-" : stats.pathQueriesBaseline;
-  const saved = stats.pathQueriesBaseline != null && stats.pathQueriesExecuted != null ? Math.max(0, Number(stats.pathQueriesBaseline) - Number(stats.pathQueriesExecuted)) : null;
-  return `${executed} / ${baseline}${saved != null ? `，节省 ${saved}` : ""}`;
-}
-
-function constraintStatsSummary(stats) {
-  if (!stats) return "";
-  const saved = Number(stats.pathQueriesSaved || 0);
-  const savedText = saved > 0 ? `，合并节省查询 ${stats.pathQueriesSaved}` : "";
-  const batchText = stats.batchGroups != null ? `，批处理组 ${stats.batchGroups}` : "";
-  const cacheText = stats.cacheHits != null ? `，缓存命中 ${stats.cacheHits}` : "";
-  return `目标 ${stats.originalTargets} -> ${stats.reducedTargets}，合并 ${stats.mergedBooks} 本${batchText}${savedText}${cacheText}`;
 }
 
 function closeCompareModal() {
@@ -1411,7 +1333,6 @@ function openCompareModal() {
   qs("#compareSummary").innerHTML = `
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
-    <span>约束传播<strong>${task.constraintsEnabled ? "开启" : "关闭"}</strong></span>
     <span>当前组合<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">请选择一种比较方式。</div>`;
@@ -1428,7 +1349,7 @@ function compareTaskPayload() {
     openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
     return null;
   }
-  return { ids, end: state.selectedSeat, constraintsEnabled: constraintsEnabled() };
+  return { ids, end: state.selectedSeat };
 }
 
 async function openAlgorithmCompare(type) {
@@ -1454,7 +1375,6 @@ async function openAlgorithmCompare(type) {
   qs("#compareSummary").innerHTML = `
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
-    <span>约束传播<strong>${task.constraintsEnabled ? "开启" : "关闭"}</strong></span>
     <span>${escapeHtml(fixedLabel.split("：")[0])}<strong>${escapeHtml(fixedLabel.split("：")[1] || "-")}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">比较中...</div>`;
@@ -1467,7 +1387,7 @@ async function openAlgorithmCompare(type) {
     try {
       const result = await api("/api/pickup/solve", {
         method: "POST",
-        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end, constraintsEnabled: task.constraintsEnabled }),
+        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end }),
       });
       rows.push({
         value,
@@ -1716,7 +1636,6 @@ function bindEvents() {
   qs("#nextRouteStep").addEventListener("click", () => moveRouteSegment(1));
   qs("#solverSelect").addEventListener("change", markRouteSettingsChanged);
   qs("#algorithmSelect").addEventListener("change", markRouteSettingsChanged);
-  qs("#constraintsToggle").addEventListener("change", markRouteSettingsChanged);
   document.querySelectorAll("[data-tool-toggle]").forEach((button) => {
     button.addEventListener("click", () => toggleWorkbenchTool(button.dataset.toolToggle));
   });

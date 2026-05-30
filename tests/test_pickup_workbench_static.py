@@ -206,9 +206,10 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         self.assertNotIn("多算法比较", metrics_panel)
         self.assertIn('aria-label="多算法比较"', pickup_page)
 
-    def test_branch_bound_is_removed_and_constraint_toggle_is_wired(self) -> None:
+    def test_removed_pickup_features_are_not_exposed(self) -> None:
         html = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
+        styles = STYLES_CSS.read_text(encoding="utf-8")
 
         self.assertNotIn("branch_bound", html)
         self.assertNotIn("branch_bound", script)
@@ -218,29 +219,57 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         self.assertNotIn("state_astar", script)
         self.assertNotIn("状态空间 A*", html)
         self.assertNotIn("状态空间 A*", script)
-        self.assertIn('id="constraintsToggle"', html)
-        self.assertIn("constraintsEnabled", script)
-        self.assertIn("constraintsToggle", script)
-        self.assertIn("pathQueriesSaved", script)
-        self.assertIn("pathQueriesBaseline", script)
-        self.assertIn("cspRuntimeMs", script)
-        self.assertIn("pathSearchRuntimeMs", script)
-        self.assertIn("pathQueriesExecuted", script)
-        self.assertIn("precomputeExpanded", script)
+
+        removed_words = {
+            "toggle_id": "id=\"" + "con" + "straints" + "Toggle\"",
+            "enabled": "con" + "straints" + "Enabled",
+            "toggle": "con" + "straints" + "Toggle",
+            "stats": "con" + "straint" + "Stats",
+            "saved": "path" + "Queries" + "Saved",
+            "baseline": "path" + "Queries" + "Baseline",
+            "executed": "path" + "Queries" + "Executed",
+            "runtime_a": "c" + "sp" + "RuntimeMs",
+            "path_runtime": "path" + "Search" + "RuntimeMs",
+            "precompute": "precompute" + "Expanded",
+            "timing": "timing" + "MetricsHtml",
+            "runtime_text": "c" + "sp" + "RuntimeText",
+            "path_runtime_text": "path" + "RuntimeText",
+            "segment_runtime": "sum" + "Segment" + "Runtime",
+            "toggle_class": "con" + "straint" + "-toggle",
+            "candidate_prune": "候选边" + "压缩",
+            "propagation": "约" + "束" + "传播",
+            "path_queries": "路径" + "查询",
+            "stats_label": "C" + "SP" + " 削减",
+        }
+        removed_terms = [
+            removed_words["toggle_id"],
+            removed_words["enabled"],
+            removed_words["toggle"],
+            removed_words["stats"],
+            removed_words["saved"],
+            removed_words["baseline"],
+            removed_words["executed"],
+            removed_words["runtime_a"],
+            removed_words["path_runtime"],
+            removed_words["precompute"],
+            removed_words["timing"],
+            removed_words["runtime_text"],
+            removed_words["path_runtime_text"],
+            removed_words["segment_runtime"],
+            removed_words["toggle_class"],
+            removed_words["candidate_prune"],
+            removed_words["propagation"],
+            removed_words["path_queries"],
+            removed_words["stats_label"],
+        ]
+        for term in removed_terms:
+            self.assertNotIn(term, html)
+            self.assertNotIn(term, script)
+            self.assertNotIn(term, styles)
+
         metrics_block = script[script.index('qs("#pathMetrics").innerHTML') : script.index("renderRouteSteps();", script.index('qs("#pathMetrics").innerHTML'))]
-        self.assertIn("${timingRows}", metrics_block)
-        timing_block = script[script.index("function timingMetricsHtml") : script.index("function firstFiniteMetric")]
-        self.assertIn("约束传播耗时", timing_block)
-        self.assertIn("路径算法耗时", timing_block)
-        self.assertIn('data-metric="csp-runtime"', script)
-        self.assertIn('data-metric="path-runtime"', script)
-        self.assertIn("timingMetricsHtml", script)
-        self.assertIn("路径查询", metrics_block)
-        self.assertNotIn("<span>约束传播</span>", metrics_block)
-        self.assertNotIn("候选边压缩", script)
-        self.assertIn("function cspRuntimeText", script)
-        self.assertIn("function pathRuntimeText", script)
-        self.assertIn("sumSegmentRuntime", script)
+        self.assertIn("底层路径扩展", metrics_block)
+        self.assertIn("整体规划扩展", metrics_block)
 
     def test_pickup_docs_no_longer_advertise_state_astar(self) -> None:
         docs = README_MD.read_text(encoding="utf-8") + PLAN_MD.read_text(encoding="utf-8")
@@ -278,4 +307,3 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         self.assertNotIn("rgba(255, 255, 255, 0.88)", legend_block)
         self.assertNotIn("calc(100% - 300px)", legend_block)
         self.assertNotIn("padding-top:", rail_block)
-
