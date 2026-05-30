@@ -24,6 +24,8 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
             "libraryGrid",
             "algorithmSelect",
             "solverSelect",
+            "constraintsToggle",
+            "cspMetrics",
             "pathMetrics",
             "algorithmCompareModal",
         ):
@@ -35,6 +37,7 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         styles = STYLES_CSS.read_text(encoding="utf-8")
 
         self.assertIn('data-tool-toggle="algorithmTools"', html)
+        self.assertIn('data-tool-toggle="cspTools"', html)
         self.assertIn('data-tool-toggle="routeStepsTools"', html)
         self.assertIn('data-tool-toggle="metricsTools"', html)
         self.assertIn('data-tool-action="compare"', html)
@@ -77,10 +80,11 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         short_height_block = styles[styles.index("@media (max-height: 760px)") : styles.index("@media (max-width: 980px) and (max-height: 760px)")]
         button_block = styles[styles.index(".tool-toggle-button {") : styles.index(".tool-toggle-button:hover")]
 
-        self.assertEqual(tool_rail.count('class="tool-toggle-button'), 4)
-        self.assertEqual(tool_rail.count('class="tool-icon"'), 4)
-        for label in ("算法", "步骤", "指标", "比较"):
+        self.assertEqual(tool_rail.count('class="tool-toggle-button'), 5)
+        self.assertEqual(tool_rail.count('class="tool-icon"'), 5)
+        for label in ("CSP", "算法", "步骤", "指标", "比较"):
             self.assertIn(f"<span>{label}</span>", tool_rail)
+        self.assertLess(tool_rail.index('data-tool-toggle="cspTools"'), tool_rail.index('data-tool-toggle="algorithmTools"'))
         self.assertNotIn('id="openMapModal"', tool_rail)
         self.assertIn("padding-top: 31px;", tool_workspace_block)
         self.assertIn("padding-top: 0;", mobile_block[mobile_block.index(".tool-workspace {") : mobile_block.index("}", mobile_block.index(".tool-workspace {"))])
@@ -200,11 +204,56 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         html = INDEX_HTML.read_text(encoding="utf-8")
         pickup_page = html[html.index('<section class="page" id="pickupPage">') : html.index('<section class="page" id="profilePage">')]
         self.assertIn('data-tool-action="compare"', pickup_page)
+        self.assertIn('id="compareConstraintModes"', html)
         metrics_panel = pickup_page[pickup_page.index('id="metricsTools"') : pickup_page.index('data-tool-action="compare"')]
 
         self.assertIn("<h2>算法指标</h2>", metrics_panel)
         self.assertNotIn("多算法比较", metrics_panel)
         self.assertIn('aria-label="多算法比较"', pickup_page)
+        self.assertIn("比较 CSP 模式", html)
+        self.assertIn('data-compare-type="path"', html)
+        self.assertIn('data-compare-type="order"', html)
+        self.assertIn('data-compare-type="constraints"', html)
+        self.assertIn("function setCompareModeButtons", APP_JS.read_text(encoding="utf-8"))
+        self.assertIn("button.disabled = active", APP_JS.read_text(encoding="utf-8"))
+
+    def test_pickup_algorithms_have_default_selection_but_remain_changeable(self) -> None:
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+
+        algorithm_select = html[html.index('id="algorithmSelect"') : html.index('data-algorithm-group="algorithmSelect"')]
+        solver_select = html[html.index('id="solverSelect"') : html.index('data-algorithm-group="solverSelect"')]
+
+        self.assertIn('<option value="astar_manhattan" selected>A* 曼哈顿</option>', algorithm_select)
+        self.assertIn('<option value="greedy" selected>贪心最近邻（Greedy）</option>', solver_select)
+        self.assertIn("setAlgorithmSelection", script)
+        self.assertIn("syncAlgorithmOptions(\"algorithmSelect\")", script)
+        self.assertIn("syncAlgorithmOptions(\"solverSelect\")", script)
+
+    def test_csp_constraint_toggle_is_exposed_and_wired(self) -> None:
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        styles = STYLES_CSS.read_text(encoding="utf-8")
+        pickup_page = html[html.index('<section class="page" id="pickupPage">') : html.index('<section class="page" id="profilePage">')]
+        csp_tools = pickup_page[pickup_page.index('id="cspTools"') : pickup_page.index('id="algorithmTools"')]
+        algorithm_tools = pickup_page[pickup_page.index('id="algorithmTools"') : pickup_page.index('id="routeStepsTools"')]
+
+        self.assertIn('id="constraintsToggle"', csp_tools)
+        self.assertIn('id="cspMetrics"', csp_tools)
+        self.assertIn("CSP 约束模式", csp_tools)
+        self.assertIn("普通 / 约束剪枝", csp_tools)
+        self.assertNotIn('id="constraintsToggle"', algorithm_tools)
+        self.assertIn(".constraint-toggle", styles)
+        self.assertIn("function constraintsEnabled", script)
+        self.assertIn("constraintsEnabled: useConstraints", script)
+        self.assertIn('qs("#constraintsToggle").addEventListener("change", markRouteSettingsChanged)', script)
+        self.assertIn("renderCspMetrics", script)
+
+        self.assertIn("约束模式", script)
+        self.assertIn("CSP 可搜索格", script)
+        self.assertIn("CSP 剪枝格", script)
+        self.assertIn("CSP 回退段", script)
+        self.assertIn("CSP 预处理", script)
 
     def test_removed_pickup_features_are_not_exposed(self) -> None:
         html = INDEX_HTML.read_text(encoding="utf-8")
@@ -221,46 +270,28 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         self.assertNotIn("状态空间 A*", script)
 
         removed_words = {
-            "toggle_id": "id=\"" + "con" + "straints" + "Toggle\"",
-            "enabled": "con" + "straints" + "Enabled",
-            "toggle": "con" + "straints" + "Toggle",
-            "stats": "con" + "straint" + "Stats",
             "saved": "path" + "Queries" + "Saved",
             "baseline": "path" + "Queries" + "Baseline",
             "executed": "path" + "Queries" + "Executed",
-            "runtime_a": "c" + "sp" + "RuntimeMs",
             "path_runtime": "path" + "Search" + "RuntimeMs",
             "precompute": "precompute" + "Expanded",
             "timing": "timing" + "MetricsHtml",
-            "runtime_text": "c" + "sp" + "RuntimeText",
             "path_runtime_text": "path" + "RuntimeText",
             "segment_runtime": "sum" + "Segment" + "Runtime",
-            "toggle_class": "con" + "straint" + "-toggle",
             "candidate_prune": "候选边" + "压缩",
-            "propagation": "约" + "束" + "传播",
             "path_queries": "路径" + "查询",
-            "stats_label": "C" + "SP" + " 削减",
         }
         removed_terms = [
-            removed_words["toggle_id"],
-            removed_words["enabled"],
-            removed_words["toggle"],
-            removed_words["stats"],
             removed_words["saved"],
             removed_words["baseline"],
             removed_words["executed"],
-            removed_words["runtime_a"],
             removed_words["path_runtime"],
             removed_words["precompute"],
             removed_words["timing"],
-            removed_words["runtime_text"],
             removed_words["path_runtime_text"],
             removed_words["segment_runtime"],
-            removed_words["toggle_class"],
             removed_words["candidate_prune"],
-            removed_words["propagation"],
             removed_words["path_queries"],
-            removed_words["stats_label"],
         ]
         for term in removed_terms:
             self.assertNotIn(term, html)
@@ -270,6 +301,8 @@ class PickupWorkbenchStaticTest(unittest.TestCase):
         metrics_block = script[script.index('qs("#pathMetrics").innerHTML') : script.index("renderRouteSteps();", script.index('qs("#pathMetrics").innerHTML'))]
         self.assertIn("底层路径扩展", metrics_block)
         self.assertIn("整体规划扩展", metrics_block)
+        self.assertNotIn("CSP 可搜索格", metrics_block)
+        self.assertNotIn("CSP 剪枝格", metrics_block)
 
     def test_pickup_docs_no_longer_advertise_state_astar(self) -> None:
         docs = README_MD.read_text(encoding="utf-8") + PLAN_MD.read_text(encoding="utf-8")

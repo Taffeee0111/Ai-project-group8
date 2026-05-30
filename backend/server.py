@@ -617,12 +617,100 @@ def heuristic(point: tuple[int, int], target: tuple[int, int], algorithm: str) -
     return dr + dc
 
 
-def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str) -> dict[str, Any]:
+def manhattan_distance(left: tuple[int, int], right: tuple[int, int]) -> int:
+    return abs(left[0] - right[0]) + abs(left[1] - right[1])
+
+
+def walkable_domain(target: tuple[int, int]) -> set[tuple[int, int]]:
+    return {
+        (row, col)
+        for row in range(GRID_SIZE)
+        for col in range(GRID_SIZE)
+        if is_walkable((row, col), target)
+    }
+
+
+def domain_neighbors(point: tuple[int, int], allowed: set[tuple[int, int]], target: tuple[int, int]) -> list[tuple[int, int]]:
+    return [nxt for nxt in neighbors(point, target) if nxt in allowed]
+
+
+def prune_dead_end_cells(
+    allowed: set[tuple[int, int]],
+    endpoints: set[tuple[int, int]],
+    target: tuple[int, int],
+) -> set[tuple[int, int]]:
+    pruned = set(allowed)
+    changed = True
+    while changed:
+        changed = False
+        removable = [
+            point
+            for point in pruned
+            if point not in endpoints and len(domain_neighbors(point, pruned, target)) <= 1
+        ]
+        if removable:
+            pruned.difference_update(removable)
+            changed = True
+    return pruned
+
+
+def csp_path_domain(start: tuple[int, int], target: tuple[int, int]) -> dict[str, Any]:
     started = time.perf_counter()
-    algorithm = normalize_path_algorithm(algorithm)
+    original = walkable_domain(target)
+    direct_distance = manhattan_distance(start, target)
+    detour_allowance = max(8, math.ceil(direct_distance * 0.55))
+    allowed = {
+        point
+        for point in original
+        if manhattan_distance(start, point) + manhattan_distance(point, target) <= direct_distance + detour_allowance
+    }
+    endpoints = {start, target}
+    allowed.update(point for point in endpoints if point in original)
+    allowed = prune_dead_end_cells(allowed, endpoints, target)
+    return {
+        "allowed": allowed,
+        "originalCells": len(original),
+        "allowedCells": len(allowed),
+        "prunedCells": max(0, len(original) - len(allowed)),
+        "fallbackSegments": 0,
+        "cspRuntimeMs": elapsed(started),
+    }
+
+
+def empty_constraint_stats() -> dict[str, Any]:
+    return {
+        "originalCells": 0,
+        "allowedCells": 0,
+        "prunedCells": 0,
+        "fallbackSegments": 0,
+        "cspRuntimeMs": 0.0,
+    }
+
+
+def merge_constraint_stats(total: dict[str, Any], result: dict[str, Any]) -> None:
+    stats = result.get("constraintStats")
+    if not stats:
+        return
+    total["originalCells"] += int(stats.get("originalCells") or 0)
+    total["allowedCells"] += int(stats.get("allowedCells") or 0)
+    total["prunedCells"] += int(stats.get("prunedCells") or 0)
+    total["fallbackSegments"] += int(stats.get("fallbackSegments") or 0)
+    total["cspRuntimeMs"] = round(float(total["cspRuntimeMs"]) + float(stats.get("cspRuntimeMs") or 0.0), 3)
+
+
+def path_runtime_ms(total_runtime_ms: float, csp_runtime_ms: float = 0.0) -> float:
+    return round(max(0.0, float(total_runtime_ms or 0.0) - float(csp_runtime_ms or 0.0)), 3)
+
+
+def run_path_search(
+    start: tuple[int, int],
+    target: tuple[int, int],
+    algorithm: str,
+    allowed: set[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
     expanded = 0
     if not is_walkable(start, target) or not is_walkable(target, target):
-        return {"path": [], "distance": None, "expanded": expanded, "runtimeMs": elapsed(started)}
+        return {"path": [], "distance": None, "expanded": expanded}
 
     if algorithm == "bfs":
         queue = deque([start])
@@ -632,8 +720,9 @@ def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str)
             expanded += 1
             if current == target:
                 path = reconstruct(came_from, target)
-                return {"path": path, "distance": path_cost(path), "expanded": expanded, "runtimeMs": elapsed(started)}
-            for nxt in neighbors(current, target):
+                return {"path": path, "distance": path_cost(path), "expanded": expanded}
+            next_cells = domain_neighbors(current, allowed, target) if allowed is not None else neighbors(current, target)
+            for nxt in next_cells:
                 if nxt not in came_from:
                     came_from[nxt] = current
                     queue.append(nxt)
@@ -648,8 +737,9 @@ def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str)
             expanded += 1
             if current == target:
                 path = reconstruct(came_from, target)
-                return {"path": path, "distance": current_cost, "expanded": expanded, "runtimeMs": elapsed(started)}
-            for nxt in neighbors(current, target):
+                return {"path": path, "distance": current_cost, "expanded": expanded}
+            next_cells = domain_neighbors(current, allowed, target) if allowed is not None else neighbors(current, target)
+            for nxt in next_cells:
                 new_cost = current_cost + movement_cost(nxt)
                 if nxt not in cost or new_cost < cost[nxt]:
                     cost[nxt] = new_cost
@@ -657,7 +747,34 @@ def search_path(start: tuple[int, int], target: tuple[int, int], algorithm: str)
                     priority = new_cost + (heuristic(nxt, target, algorithm) if algorithm.startswith("astar_") else 0)
                     heapq.heappush(heap, (priority, new_cost, nxt))
 
-    return {"path": [], "distance": None, "expanded": expanded, "runtimeMs": elapsed(started)}
+    return {"path": [], "distance": None, "expanded": expanded}
+
+
+def search_path(
+    start: tuple[int, int],
+    target: tuple[int, int],
+    algorithm: str,
+    constraints_enabled: bool = False,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    algorithm = normalize_path_algorithm(algorithm)
+    if not constraints_enabled:
+        result = run_path_search(start, target, algorithm)
+        result["runtimeMs"] = elapsed(started)
+        return result
+
+    domain = csp_path_domain(start, target)
+    result = run_path_search(start, target, algorithm, domain["allowed"])
+    constrained_expanded = int(result.get("expanded") or 0)
+    if result["distance"] is None:
+        fallback = run_path_search(start, target, algorithm)
+        fallback["expanded"] = constrained_expanded + int(fallback.get("expanded") or 0)
+        result = fallback
+        domain["fallbackSegments"] = 1
+    result["runtimeMs"] = path_runtime_ms(elapsed(started), float(domain.get("cspRuntimeMs") or 0.0))
+    result["constraintsEnabled"] = True
+    result["constraintStats"] = {key: value for key, value in domain.items() if key != "allowed"}
+    return result
 
 
 def elapsed(started: float) -> float:
@@ -741,6 +858,14 @@ def normalize_algorithm(value: Any) -> str:
 def normalize_method(value: Any) -> str:
     method = normalize_order_method(str(value or "greedy"))
     return method if method in {"greedy", "greedy_2opt"} else "greedy"
+
+
+def normalize_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def split_terms(value: str | None) -> list[str]:
@@ -1071,7 +1196,8 @@ class Handler(BaseHTTPRequestHandler):
                 algorithm = normalize_algorithm(data.get("algorithm"))
                 book_ids = [int(x) for x in data.get("bookIds", [])]
                 end = parse_end_point(data.get("end"))
-                return json_response(self, 200, plan_pickup(conn, book_ids, algorithm, end))
+                constraints_enabled = normalize_bool(data.get("constraintsEnabled"))
+                return json_response(self, 200, plan_pickup(conn, book_ids, algorithm, end, constraints_enabled))
 
             if path == "/api/pickup/solve":
                 if not user_id:
@@ -1080,7 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
                 method = normalize_method(data.get("method"))
                 book_ids = [int(x) for x in data.get("bookIds", [])]
                 end = parse_end_point(data.get("end"))
-                result = solve_pickup(conn, book_ids, algorithm, method, end)
+                constraints_enabled = normalize_bool(data.get("constraintsEnabled"))
+                result = solve_pickup(conn, book_ids, algorithm, method, end, constraints_enabled)
                 if "error" in result:
                     return json_response(self, 400, result)
                 return json_response(self, 200, result)
@@ -1525,7 +1652,13 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
     return result
 
 
-def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, end: tuple[int, int] = DEFAULT_SEAT) -> dict[str, Any]:
+def plan_pickup(
+    conn: sqlite3.Connection,
+    book_ids: list[int],
+    algorithm: str,
+    end: tuple[int, int] = DEFAULT_SEAT,
+    constraints_enabled: bool = False,
+) -> dict[str, Any]:
     algorithm = normalize_path_algorithm(algorithm)
     rows = conn.execute(
         f"""
@@ -1548,18 +1681,20 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, e
     total_expanded = 0
     solver_expanded = 0
     total_runtime = 0.0
+    constraint_stats = empty_constraint_stats()
     previous_label = "入口"
 
     while unvisited:
         best = None
         for target in unvisited:
             solver_expanded += 1
-            result = search_path(current, tuple(target["pickup"]), algorithm)
+            result = search_path(current, tuple(target["pickup"]), algorithm, constraints_enabled)
             if result["distance"] is not None and (best is None or result["distance"] < best[0]["distance"]):
                 best = (result, target)
         if best is None:
             break
         segment, target = best
+        merge_constraint_stats(constraint_stats, segment)
         full_path.extend(segment["path"][1:])
         total_distance += segment["distance"]
         total_expanded += segment["expanded"]
@@ -1590,8 +1725,9 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, e
         previous_label = target["shelf_id"]
         unvisited.remove(target)
 
-    end_segment = search_path(current, end, algorithm)
+    end_segment = search_path(current, end, algorithm, constraints_enabled)
     if end_segment["distance"] is not None:
+        merge_constraint_stats(constraint_stats, end_segment)
         full_path.extend(end_segment["path"][1:])
         total_distance += end_segment["distance"]
         total_expanded += end_segment["expanded"]
@@ -1610,7 +1746,7 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, e
             }
         )
 
-    return {
+    result = {
         "algorithm": algorithm,
         "distance": total_distance,
         "expanded": total_expanded,
@@ -1623,6 +1759,10 @@ def plan_pickup(conn: sqlite3.Connection, book_ids: list[int], algorithm: str, e
         "unreachable": unvisited,
         "end": list(end),
     }
+    if constraints_enabled:
+        result["constraintsEnabled"] = True
+        result["constraintStats"] = constraint_stats
+    return result
 
 
 def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[str, Any]]:
@@ -1653,23 +1793,39 @@ def solve_pickup(
     algorithm: str,
     method: str,
     end: tuple[int, int] = DEFAULT_SEAT,
+    constraints_enabled: bool = False,
 ) -> dict[str, Any]:
     algorithm = normalize_path_algorithm(algorithm)
     method = normalize_order_method(method)
     if method not in {"greedy", "greedy_2opt"}:
         method = "greedy"
     if method == "greedy":
-        plan = plan_pickup(conn, book_ids, algorithm, end)
+        plan = plan_pickup(conn, book_ids, algorithm, end, constraints_enabled)
         plan["method"] = method
         return plan
 
     targets = pickup_targets(conn, book_ids)
     if not targets:
-        return {"algorithm": algorithm, "method": method, "distance": 0, "expanded": 0, "runtimeMs": 0.0, "path": [[ENTRANCE[0], ENTRANCE[1]]], "segments": [], "visitOrder": [], "unreachable": [], "end": list(end)}
+        result = {
+            "algorithm": algorithm,
+            "method": method,
+            "distance": 0,
+            "expanded": 0,
+            "runtimeMs": 0.0,
+            "path": [[ENTRANCE[0], ENTRANCE[1]]],
+            "segments": [],
+            "visitOrder": [],
+            "unreachable": [],
+            "end": list(end),
+        }
+        if constraints_enabled:
+            result["constraintsEnabled"] = True
+            result["constraintStats"] = empty_constraint_stats()
+        return result
 
     started = time.perf_counter()
     points = compute_keypoints(targets, end)
-    pair_results, pre_expanded, _pre_runtime = precompute_paths(points, algorithm)
+    pair_results, pre_expanded, _pre_runtime, constraint_stats = precompute_paths(points, algorithm, constraints_enabled)
 
     if method == "greedy":
         order, solver_expanded = greedy_pickup_order(pair_results, len(targets))
@@ -1683,8 +1839,12 @@ def solve_pickup(
     plan["method"] = method
     plan["solverExpanded"] = solver_expanded
     plan["pathExpanded"] = pre_expanded
-    plan["runtimeMs"] = round((time.perf_counter() - started) * 1000, 3)
+    total_runtime_ms = elapsed(started)
+    plan["runtimeMs"] = path_runtime_ms(total_runtime_ms, constraint_stats["cspRuntimeMs"] if constraints_enabled else 0.0)
     plan["expanded"] = int(pre_expanded or 0) + int(solver_expanded or 0)
+    if constraints_enabled:
+        plan["constraintsEnabled"] = True
+        plan["constraintStats"] = constraint_stats
     return plan
 
 
@@ -1695,19 +1855,22 @@ def compute_keypoints(targets: list[dict[str, Any]], end: tuple[int, int] = DEFA
 def precompute_paths(
     points: list[tuple[int, int]],
     algorithm: str,
-) -> tuple[dict[tuple[int, int], dict[str, Any]], int, float]:
+    constraints_enabled: bool = False,
+) -> tuple[dict[tuple[int, int], dict[str, Any]], int, float, dict[str, Any]]:
     results: dict[tuple[int, int], dict[str, Any]] = {}
     total_expanded = 0
     total_runtime = 0.0
+    constraint_stats = empty_constraint_stats()
     for i, src in enumerate(points):
         for j, dst in enumerate(points):
             if i == j:
                 continue
-            res = search_path(src, dst, algorithm)
+            res = search_path(src, dst, algorithm, constraints_enabled)
             results[(i, j)] = res
             total_expanded += int(res.get("expanded") or 0)
             total_runtime += float(res.get("runtimeMs") or 0.0)
-    return results, total_expanded, total_runtime
+            merge_constraint_stats(constraint_stats, res)
+    return results, total_expanded, total_runtime, constraint_stats
 
 
 def best_segment(

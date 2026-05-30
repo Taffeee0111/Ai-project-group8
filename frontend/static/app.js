@@ -24,6 +24,7 @@ const state = {
   selectedSeat: null,
   recommendationRequestId: 0,
   recommendationTimer: null,
+  latestRouteResult: null,
 };
 
 const ROUTE_PLAYBACK_STEP_MS = 90;
@@ -474,6 +475,7 @@ async function loadPickup() {
   renderRouteSteps();
   syncAlgorithmOptions("algorithmSelect");
   syncAlgorithmOptions("solverSelect");
+  renderCspMetrics();
   renderMap();
 }
 
@@ -500,6 +502,36 @@ function resetPathMetrics(message = "等待生成路径") {
 function selectedOptionText(selector, fallback) {
   const element = qs(selector);
   return element?.selectedOptions?.[0]?.textContent || fallback;
+}
+
+function constraintsEnabled() {
+  return Boolean(qs("#constraintsToggle")?.checked);
+}
+
+function constraintMetricsRows(result) {
+  if (!result?.constraintsEnabled || !result.constraintStats) return "";
+  const stats = result.constraintStats;
+  const allowed = stats.allowedCells ?? 0;
+  const original = stats.originalCells ?? 0;
+  return `
+      <div class="metric-row"><span>CSP 可搜索格</span><strong>${allowed} / ${original}</strong></div>
+      <div class="metric-row"><span>CSP 剪枝格</span><strong>${stats.prunedCells ?? 0}</strong></div>
+      <div class="metric-row"><span>CSP 回退段</span><strong>${stats.fallbackSegments ?? 0}</strong></div>
+      <div class="metric-row"><span>CSP 预处理</span><strong>${stats.cspRuntimeMs ?? 0} ms</strong></div>
+    `;
+}
+
+function renderCspMetrics(result = state.latestRouteResult) {
+  const box = qs("#cspMetrics");
+  if (!box) return;
+  const rows = constraintMetricsRows(result);
+  if (rows) {
+    box.classList.remove("analysis-empty");
+    box.innerHTML = `<section class="analysis-group">${rows}</section>`;
+    return;
+  }
+  box.classList.add("analysis-empty");
+  box.innerHTML = `<strong>${constraintsEnabled() ? "生成路径后显示 CSP 指标" : "开启 CSP 后生成路径"}</strong>`;
 }
 
 function syncAlgorithmOptions(selectId) {
@@ -636,7 +668,9 @@ function resetPlannedRoute() {
   state.playbackProgress = null;
   state.playbackStartedAt = null;
   state.playbackStartProgress = 0;
+  state.latestRouteResult = null;
   renderRouteSteps();
+  renderCspMetrics();
   renderMap();
   updateRouteProgress();
 }
@@ -1255,6 +1289,7 @@ async function planPath(options = {}) {
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "";
+  const useConstraints = constraintsEnabled();
   if (!algorithm || !method) {
     openNotice("需要先选择两点路径算法和整体取书算法。", "需要选择算法");
     resetPathMetrics();
@@ -1267,7 +1302,7 @@ async function planPath(options = {}) {
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
-      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat }),
+      body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat, constraintsEnabled: useConstraints }),
     });
     if (requestId !== state.planRequestId) return;
   } catch (err) {
@@ -1279,14 +1314,16 @@ async function planPath(options = {}) {
     state.playbackProgress = null;
     state.playbackStartedAt = null;
     state.playbackStartProgress = 0;
+    state.latestRouteResult = null;
     resetPathMetrics();
+    renderCspMetrics();
     renderRouteSteps();
     renderMap();
     updateRouteProgress();
     return;
   }
   if (!result) return;
-  if (result.algorithm !== algorithm || result.method !== method) {
+  if (result.algorithm !== algorithm || result.method !== method || Boolean(result.constraintsEnabled) !== useConstraints) {
     resetPathMetrics();
     return;
   }
@@ -1294,6 +1331,7 @@ async function planPath(options = {}) {
   state.targets = result.visitOrder || [];
   state.segments = result.segments || [];
   state.autoPlanEnabled = true;
+  state.latestRouteResult = result;
   state.activeSegment = null;
   state.playbackProgress = null;
   state.playbackStartedAt = null;
@@ -1306,11 +1344,13 @@ async function planPath(options = {}) {
       <div class="metric-row"><span>总代价</span><strong>${result.distance}</strong></div>
       <div class="metric-row"><span>两点算法</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
       <div class="metric-row"><span>整体算法</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
+      <div class="metric-row"><span>约束模式</span><strong>${result.constraintsEnabled ? "CSP 开启" : "普通"}</strong></div>
       ${result.pathExpanded != null ? `<div class="metric-row"><span>底层路径扩展</span><strong>${result.pathExpanded}</strong></div>` : ""}
       ${result.solverExpanded != null ? `<div class="metric-row"><span>整体规划扩展</span><strong>${result.solverExpanded}</strong></div>` : ""}
-      <div class="metric-row"><span>运行时间</span><strong>${result.runtimeMs} ms</strong></div>
+      <div class="metric-row"><span>路径计算时间</span><strong>${result.runtimeMs} ms</strong></div>
     </section>
   `;
+  renderCspMetrics(result);
   renderRouteSteps();
   renderMap();
   updateRouteProgress();
@@ -1325,15 +1365,26 @@ function closeCompareModal() {
   qs("#algorithmCompareModal").hidden = true;
 }
 
+function setCompareModeButtons(activeType = "") {
+  document.querySelectorAll("[data-compare-type]").forEach((button) => {
+    const active = button.dataset.compareType === activeType;
+    button.classList.toggle("active", active);
+    button.disabled = active;
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
 function openCompareModal() {
   const task = compareTaskPayload();
   if (!task) return;
+  setCompareModeButtons("");
   qs("#compareTitle").textContent = "多算法比较";
   qs("#compareSubtitle").textContent = "选择固定一类算法后，比较另一类算法的表现。";
   qs("#compareSummary").innerHTML = `
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
     <span>当前组合<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
+    <span>约束模式<strong>${task.constraintsEnabled ? "CSP" : "普通"}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">请选择一种比较方式。</div>`;
   qs("#algorithmCompareModal").hidden = false;
@@ -1349,7 +1400,7 @@ function compareTaskPayload() {
     openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
     return null;
   }
-  return { ids, end: state.selectedSeat };
+  return { ids, end: state.selectedSeat, constraintsEnabled: constraintsEnabled() };
 }
 
 async function openAlgorithmCompare(type) {
@@ -1363,12 +1414,16 @@ async function openAlgorithmCompare(type) {
     qs("#compareTableWrap").innerHTML = `<div class="compare-error">请先选择两点路径算法和整体取书算法。</div>`;
     return;
   }
+  setCompareModeButtons(type);
   const comparePath = type === "path";
-  const title = comparePath ? "两点路径算法比较" : "整体取书算法比较";
-  const fixedLabel = comparePath
+  const compareConstraints = type === "constraints";
+  const title = compareConstraints ? "CSP 模式比较" : comparePath ? "两点路径算法比较" : "整体取书算法比较";
+  const fixedLabel = compareConstraints
+    ? `固定算法组合：${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)} + ${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
+    : comparePath
     ? `固定整体算法：${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
     : `固定两点算法：${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)}`;
-  const candidates = comparePath ? PATH_ALGORITHMS : ORDER_ALGORITHMS;
+  const candidates = compareConstraints ? [[false, "普通模式"], [true, "CSP 开启"]] : comparePath ? PATH_ALGORITHMS : ORDER_ALGORITHMS;
 
   qs("#compareTitle").textContent = title;
   qs("#compareSubtitle").textContent = "比较结果只用于分析，不会改变当前地图路线。";
@@ -1376,6 +1431,7 @@ async function openAlgorithmCompare(type) {
     <span>本次取书<strong>${task.ids.length} 本</strong></span>
     <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
     <span>${escapeHtml(fixedLabel.split("：")[0])}<strong>${escapeHtml(fixedLabel.split("：")[1] || "-")}</strong></span>
+    <span>约束模式<strong>${task.constraintsEnabled ? "CSP" : "普通"}</strong></span>
   `;
   qs("#compareTableWrap").innerHTML = `<div class="compare-loading">比较中...</div>`;
   qs("#algorithmCompareModal").hidden = false;
@@ -1383,37 +1439,45 @@ async function openAlgorithmCompare(type) {
   const rows = [];
   for (const [value, label] of candidates) {
     const algorithm = comparePath ? value : currentPathAlgorithm;
-    const method = comparePath ? currentOrderAlgorithm : value;
+    const method = comparePath || compareConstraints ? currentOrderAlgorithm : value;
+    const useConstraints = compareConstraints ? value : task.constraintsEnabled;
     try {
       const result = await api("/api/pickup/solve", {
         method: "POST",
-        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end }),
+        body: JSON.stringify({ bookIds: task.ids, algorithm, method, end: task.end, constraintsEnabled: useConstraints }),
       });
       rows.push({
         value,
         label,
-        current: comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
+        current: compareConstraints ? value === task.constraintsEnabled : comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
         result,
       });
     } catch (err) {
       rows.push({
         value,
         label,
-        current: comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
+        current: compareConstraints ? value === task.constraintsEnabled : comparePath ? value === currentPathAlgorithm : value === currentOrderAlgorithm,
         error: err.message,
       });
     }
     if (requestId !== state.compareRequestId) return;
   }
-  renderCompareRows(rows);
+  renderCompareRows(rows, compareConstraints ? "CSP 模式" : "算法", compareConstraints);
 }
 
-function renderCompareRows(rows) {
+function compareMetricValue(row, key) {
+  if (key === "cspRuntimeMs") return row.result?.constraintStats?.cspRuntimeMs ?? 0;
+  return row.result?.[key];
+}
+
+function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false) {
   const successful = rows.filter((row) => row.result && row.result.distance != null);
-  const metricKeys = ["distance", "pathExpanded", "solverExpanded", "runtimeMs"];
+  const metricKeys = includeCspStats
+    ? ["distance", "pathExpanded", "solverExpanded", "runtimeMs", "cspRuntimeMs"]
+    : ["distance", "pathExpanded", "solverExpanded", "runtimeMs"];
   const metricRanges = Object.fromEntries(metricKeys.map((key) => {
     const values = successful
-      .map((row) => Number(row.result[key]))
+      .map((row) => Number(compareMetricValue(row, key)))
       .filter((value) => Number.isFinite(value));
     if (!values.length) return [key, { min: null, max: null }];
     return [key, { min: Math.min(...values), max: Math.max(...values) }];
@@ -1434,11 +1498,12 @@ function renderCompareRows(rows) {
     <table class="compare-table">
       <thead>
         <tr>
-          <th>算法</th>
+          <th>${escapeHtml(labelHeader)}</th>
           <th>总代价</th>
           <th>底层路径扩展</th>
           <th>整体规划扩展</th>
-          <th>运行时间</th>
+          <th>路径计算时间</th>
+          ${includeCspStats ? `<th>CSP 预处理</th>` : ""}
         </tr>
       </thead>
       <tbody>
@@ -1447,7 +1512,7 @@ function renderCompareRows(rows) {
             return `
               <tr class="${row.current ? "current" : ""}">
                 <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}</td>
-                <td colspan="4">${escapeHtml(row.error)}</td>
+                <td colspan="${includeCspStats ? 5 : 4}">${escapeHtml(row.error)}</td>
               </tr>
             `;
           }
@@ -1459,6 +1524,7 @@ function renderCompareRows(rows) {
               ${metricCell("pathExpanded", result.pathExpanded)}
               ${metricCell("solverExpanded", result.solverExpanded)}
               ${metricCell("runtimeMs", result.runtimeMs, " ms")}
+              ${includeCspStats ? metricCell("cspRuntimeMs", result.constraintStats?.cspRuntimeMs ?? 0, " ms") : ""}
             </tr>
           `;
         }).join("")}
@@ -1636,6 +1702,7 @@ function bindEvents() {
   qs("#nextRouteStep").addEventListener("click", () => moveRouteSegment(1));
   qs("#solverSelect").addEventListener("change", markRouteSettingsChanged);
   qs("#algorithmSelect").addEventListener("change", markRouteSettingsChanged);
+  qs("#constraintsToggle").addEventListener("change", markRouteSettingsChanged);
   document.querySelectorAll("[data-tool-toggle]").forEach((button) => {
     button.addEventListener("click", () => toggleWorkbenchTool(button.dataset.toolToggle));
   });
@@ -1657,6 +1724,7 @@ function bindEvents() {
   });
   qs("#comparePathAlgorithms").addEventListener("click", () => openAlgorithmCompare("path"));
   qs("#compareOrderAlgorithms").addEventListener("click", () => openAlgorithmCompare("order"));
+  qs("#compareConstraintModes").addEventListener("click", () => openAlgorithmCompare("constraints"));
   qs("#libraryGrid").addEventListener("click", (event) => {
     const cell = event.target.closest("[data-seat='true']");
     if (cell) selectSeat(cell.dataset.row, cell.dataset.col);

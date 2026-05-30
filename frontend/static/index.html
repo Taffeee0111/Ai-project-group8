@@ -179,6 +179,24 @@
                 </div>
               </div>
               <div class="floating-tools">
+                <section class="algorithm-card csp-tool-card floating-tool-panel collapsed" id="cspTools">
+                  <div class="section-title tool-panel-title">
+                    <h2>CSP 约束</h2>
+                  </div>
+                  <div class="tool-panel-body">
+                    <label class="constraint-toggle">
+                      <span class="constraint-toggle-copy">
+                        <strong>CSP 约束模式</strong>
+                        <small>普通 / 约束剪枝</small>
+                      </span>
+                      <input id="constraintsToggle" type="checkbox" />
+                      <span class="constraint-switch" aria-hidden="true"></span>
+                    </label>
+                    <div class="metrics analysis-empty" id="cspMetrics">
+                      <strong>开启 CSP 后生成路径</strong>
+                    </div>
+                  </div>
+                </section>
                 <section class="algorithm-card algorithm-choice-card floating-tool-panel collapsed" id="algorithmTools">
                   <div class="section-title tool-panel-title">
                     <h2>算法选择</h2>
@@ -193,10 +211,10 @@
                         </button>
                       </div>
                       <select id="algorithmSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                        <option value="" selected>请选择两点路径算法</option>
+                        <option value="">请选择两点路径算法</option>
                         <option value="bfs">BFS</option>
                         <option value="ucs">Uniform Cost Search</option>
-                        <option value="astar_manhattan">A* 曼哈顿</option>
+                        <option value="astar_manhattan" selected>A* 曼哈顿</option>
                         <option value="astar_euclidean">A* 欧几里得</option>
                       </select>
                       <div class="algorithm-options" data-algorithm-group="algorithmSelect">
@@ -215,17 +233,17 @@
                         </button>
                       </div>
                       <select id="solverSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                        <option value="" selected>请选择整体取书算法</option>
-                        <option value="greedy">贪心最近邻（Greedy）</option>
+                        <option value="">请选择整体取书算法</option>
+                        <option value="greedy" selected>贪心最近邻（Greedy）</option>
                         <option value="greedy_2opt">贪心 + 2-opt 优化</option>
                       </select>
-                    <div class="algorithm-options" data-algorithm-group="solverSelect">
-                      <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
-                      <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
+                      <div class="algorithm-options" data-algorithm-group="solverSelect">
+                        <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
+                        <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </section>
+                </section>
                 <section class="algorithm-card route-steps-card floating-tool-panel" id="routeStepsTools">
                   <div class="section-title tool-panel-title">
                     <h2>取书步骤</h2>
@@ -249,6 +267,13 @@
             </section>
             <aside class="tool-workspace" data-workbench-panel="tools">
               <div class="tool-rail" aria-label="取书工具">
+                <button class="tool-toggle-button" type="button" data-tool-toggle="cspTools" aria-expanded="false" aria-label="CSP 约束" title="CSP 约束">
+                  <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 17 9 11l4 4 7-8"></path>
+                    <path d="M14 7h6v6"></path>
+                  </svg>
+                  <span>CSP</span>
+                </button>
                 <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="算法选择" title="算法选择">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="6" cy="6" r="2.5"></circle>
@@ -417,8 +442,9 @@
         </div>
         <div class="compare-summary" id="compareSummary"></div>
         <div class="compare-mode-actions">
-          <button id="comparePathAlgorithms">固定整体算法，比较两点算法</button>
-          <button id="compareOrderAlgorithms">固定两点算法，比较整体算法</button>
+          <button id="comparePathAlgorithms" data-compare-type="path">固定整体算法，比较两点算法</button>
+          <button id="compareOrderAlgorithms" data-compare-type="order">固定两点算法，比较整体算法</button>
+          <button id="compareConstraintModes" data-compare-type="constraints">固定算法组合，比较 CSP 模式</button>
         </div>
         <div class="compare-table-wrap" id="compareTableWrap">
           <div class="compare-loading">请选择一种比较方式。</div>
