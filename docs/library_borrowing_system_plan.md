@@ -22,7 +22,8 @@
 
 - 用户注册、登录和当前用户查询。
 - 登录用户修改密码。
-- 图书搜索，支持按书名、作者、分类、简介、ISBN、出版社、年份和评分等字段匹配或筛选。
+- 图书搜索，支持按书名、作者、分类、简介、ISBN、出版社、年份、评分和评分人数等字段匹配或筛选。
+- 搜索筛选项接口，返回常见 genre 和出版社列表供前端筛选控件使用。
 - 搜索历史记录。
 - 收藏和取消收藏图书。
 - 个人中心展示用户名、注册时间、最近登录时间、搜索历史和收藏图书。
@@ -33,7 +34,9 @@
 - 取书路径生成、步骤列表、路径播放、暂停、重置和放大地图弹窗。
 - 贪心最近邻、贪心 + 2-opt 两种多目标访问顺序求解方式。
 - BFS、Uniform Cost Search、A* 曼哈顿、A* 欧几里得四种底层路径搜索策略。
-- 算法指标展示，包括总代价、扩展节点数、运行时间、求解扩展节点等。
+- 可选 CSP 约束模式，对两点路径搜索可行域做预剪枝，并在失败时回退普通搜索。
+- 算法指标展示，包括总代价、底层路径扩展、整体规划扩展、运行时间和 CSP 指标。
+- 多算法比较弹窗，可固定整体算法比较两点算法、固定两点算法比较整体算法，或固定算法组合比较普通模式与 CSP 模式。
 
 ## 3. 数据与数据库
 
@@ -97,6 +100,15 @@
 - 不能穿过书架。
 - 阅读区座位只能作为目标进入，不能作为中途路径穿越。
 - 拥堵区可通行，但进入代价为 2。
+
+CSP 约束模式：
+
+- 请求中的 `constraintsEnabled` 为 `true` 时开启。
+- 每段两点搜索前，`csp_path_domain()` 会先生成当前目标允许进入的可通行格集合。
+- 约束域保留满足 `manhattan(start, cell) + manhattan(cell, target)` 不超过直达曼哈顿距离加绕行余量的格子。
+- `prune_dead_end_cells()` 会持续移除非起终点的死胡同格子，减少底层搜索需要考虑的候选空间。
+- 如果约束域内找不到路径，代码会自动回退到普通搜索，并把该段计入 `fallbackSegments`。
+- 返回指标包含 `originalCells`、`allowedCells`、`prunedCells`、`fallbackSegments` 和 `cspRuntimeMs`。
 
 上层多目标访问顺序策略：
 
@@ -184,6 +196,7 @@ PORT=8001 ./start_server.command
 图书与推荐：
 
 - `GET /api/books/search?keyword=...&record=1`
+- `GET /api/books/search-facets`
 - `GET /api/books/recommendations?limit=10`
 - `GET /api/books/recommendations?limit=10&analysis=1`
 - `POST /api/books/{id}/favorite`
@@ -215,6 +228,19 @@ PORT=8001 ./start_server.command
 
 个人信息当前通过 `GET /api/auth/me` 获取。搜索历史由 `GET /api/books/search` 在 `record=1` 时自动记录。
 
+`GET /api/books/search` 支持的查询参数：
+
+- `keyword`：匹配书名、作者、分类、简介、出版社、ISBN、语言、格式、genres 和 top shelves。
+- `record`：默认为 `1`，登录用户搜索关键词会写入搜索历史；传 `0` 时不记录。
+- `genre`、`shelfTag`、`publisher`、`language`、`format`：按数据集元数据过滤。
+- `yearFrom`、`yearTo`：按出版年份区间过滤。
+- `minRating`、`minRatingsCount`：按 Goodreads 平均评分和评分人数过滤。
+
+`GET /api/books/search-facets` 当前返回：
+
+- `genres`：按出现次数排序的前 80 个 genre。
+- `publishers`：按出现次数排序的前 80 个出版社。
+
 ## 9. 主要请求示例
 
 路径求解：
@@ -224,7 +250,8 @@ PORT=8001 ./start_server.command
   "bookIds": [1, 2, 3],
   "algorithm": "astar_manhattan",
   "method": "greedy",
-  "end": [10, 10]
+  "end": [10, 10],
+  "constraintsEnabled": false
 }
 ```
 
@@ -234,6 +261,7 @@ PORT=8001 ./start_server.command
 - `algorithm`：可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`。
 - `method`：可选 `greedy`、`greedy_2opt`。
 - `end`：用户点击选择的阅读区座位坐标。
+- `constraintsEnabled`：是否启用 CSP 约束模式。
 
 返回结果包含：
 
@@ -241,11 +269,15 @@ PORT=8001 ./start_server.command
 - `method`：上层求解方式。
 - `distance`：总代价。
 - `expanded`：扩展节点数。
+- `pathExpanded`：底层两点路径搜索扩展节点数。
+- `solverExpanded`：整体访问顺序求解扩展计数。
 - `runtimeMs`：运行时间。
 - `path`：完整路径坐标。
 - `segments`：分段路径和文字步骤。
 - `visitOrder`：图书访问顺序。
 - `end`：最终座位。
+- `constraintsEnabled`：开启 CSP 时返回 `true`。
+- `constraintStats`：开启 CSP 时返回，包括可搜索格、剪枝格、回退段和 CSP 预处理耗时。
 
 推荐分析接口：
 
@@ -279,6 +311,8 @@ GET /api/books/recommendations?limit=10&analysis=1
 - 生成路径后可播放、暂停、重置。
 - 点击步骤可只查看该分段路径。
 - 地图可打开大图弹窗。
+- 可展开 CSP、算法、步骤和指标工具面板。
+- 多算法比较弹窗会基于当前取书任务重复调用 `POST /api/pickup/solve`，比较总代价、底层路径扩展、整体规划扩展和路径计算时间；比较 CSP 模式时额外展示 CSP 预处理时间。
 
 ## 11. 项目结构
 
@@ -325,6 +359,7 @@ start_server.bat
 - 当前没有单本图书详情 API。
 - 当前没有登出 API；前端如需登出，可以清除本地 token，但当前界面未提供独立登出按钮。
 - 推荐系统不再在 SQLite 中导入原始交互表，也不再使用旧版手写混合权重 `content/collaborative/popularity/novelty`。
+- 搜索筛选项接口当前只返回 `genres` 和 `publishers`，不返回旧版可能设想的 `shelfTags`、`languages` 或 `formats` 聚合列表。
 
 后续若继续开发，应优先以这些实际实现为基础，而不是恢复旧规划中的 24 * 24 或 300 书架方案。
 
@@ -337,6 +372,7 @@ start_server.bat
 - 拥堵区如何让“最短步数”和“最低总代价”产生差异。
 - BFS、UCS、A* 在扩展节点数、运行时间和总代价上的对比。
 - 贪心最近邻、贪心 + 2-opt 在多目标访问顺序上的差异。
+- CSP 约束模式如何通过预剪枝减少搜索空间，以及回退机制如何保证路径仍可生成。
 - SVD 协同过滤推荐如何从 Goodreads 交互数据学习图书 embedding。
 - TF-IDF 内容模型如何在用户无收藏时做冷启动推荐。
 - 模型缺失时如何通过热门高评分图书兜底，保证系统可用。
@@ -349,4 +385,5 @@ start_server.bat
 4. 进入取书页，从收藏或搜索加入多本书。
 5. 点击绿色阅读区选择终点座位。
 6. 分别切换整体取书算法和 BFS、UCS、A* 曼哈顿、A* 欧几里得。
-7. 比较路线、总代价、扩展节点和运行时间。
+7. 打开多算法比较，比较路线、总代价、扩展节点和运行时间。
+8. 开启 CSP 约束模式，比较普通模式与 CSP 模式的可搜索格、剪枝格和预处理耗时。

@@ -1,7 +1,7 @@
 # Goodreads 10k Dataset Summary
 
 - Books: 10000
-- Source XML files: /Users/tubai/Desktop/books_xml
+- Source XML files: local generation input, not required by the app at runtime
 - Minimum ratings_count: 2718
 - Median ratings_count: 21168
 - Maximum ratings_count: 4784860

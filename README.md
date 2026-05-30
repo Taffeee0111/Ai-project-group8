@@ -8,7 +8,8 @@
 
 - 注册和登录。
 - 登录后可修改密码。
-- 搜索 Goodreads 10k 数据集中的 10000 本图书，并支持 genre、出版社、年份、评分等高级筛选。
+- 搜索 Goodreads 10k 数据集中的 10000 本图书，并支持 genre、出版社、年份、评分、评分人数等高级筛选。
+- 提供搜索筛选项接口，前端会自动加载常见 genre 和出版社选项。
 - 使用离线训练的 SVD 协同过滤模型生成个性化推荐；无收藏时使用 TF-IDF 内容冷启动，模型缺失时回退到热门高评分图书。
 - 收藏图书并在个人中心查看。
 - 在取书界面构建“本次取书”任务篮，可从“我的收藏”或搜索结果中直接加入图书。
@@ -16,7 +17,8 @@
 - 地图包含书架、阅读区、拥堵区和入口；书架与阅读区不可穿过，拥堵区可通行但每步代价为 2。
 - 支持 BFS、Uniform Cost Search、A* 曼哈顿和 A* 欧几里得作为底层两点路径搜索策略。
 - 支持贪心最近邻和贪心 + 2-opt 作为多本书访问顺序求解方式。
-- 前端提供地图可视化、路径播放、步骤高亮、放大地图弹窗和算法指标展示。
+- 支持可选 CSP 约束模式：先剪枝两点搜索可行域，必要时自动回退普通搜索，并展示 CSP 可搜索格、剪枝格、回退段和预处理耗时。
+- 前端提供地图可视化、路径播放、步骤高亮、放大地图弹窗、算法指标展示和多算法比较弹窗。
 
 ## 数据
 
@@ -143,6 +145,7 @@ password: demo123
 - `GET /api/auth/me`
 - `POST /api/users/me/password`
 - `GET /api/books/search?keyword=...`
+- `GET /api/books/search-facets`
 - `GET /api/books/recommendations?limit=10`
 - `GET /api/books/recommendations?limit=10&analysis=1`
 - `POST /api/books/{id}/favorite`
@@ -157,6 +160,24 @@ password: demo123
 
 当前代码没有实现 `/api/auth/logout`、`GET /api/books/{id}`、`POST /api/search-history` 或单独的 `GET /api/users/me`；个人信息通过 `GET /api/auth/me` 获取。
 
+`GET /api/books/search` 支持的主要查询参数包括：
+
+```text
+keyword
+record
+genre
+shelfTag
+publisher
+language
+format
+yearFrom
+yearTo
+minRating
+minRatingsCount
+```
+
+当前前端使用 `keyword`、`record`、`genre`、`publisher`、`yearFrom`、`yearTo`、`minRating` 和 `minRatingsCount`；后端也保留了 `shelfTag`、`language` 和 `format` 过滤能力。
+
 `POST /api/pickup/solve` 支持传入：
 
 ```json
@@ -164,11 +185,13 @@ password: demo123
   "bookIds": [1, 2, 3],
   "algorithm": "astar_manhattan",
   "method": "greedy",
-  "end": [10, 10]
+  "end": [10, 10],
+  "constraintsEnabled": false
 }
 ```
 
 其中 `algorithm` 可选 `bfs`、`ucs`、`astar_manhattan`、`astar_euclidean`；`method` 可选 `greedy`、`greedy_2opt`；`end` 是用户在绿色阅读区选择的最终座位坐标。
+`constraintsEnabled` 为 `true` 时开启 CSP 约束模式，返回结果会额外包含 `constraintsEnabled` 和 `constraintStats`。
 
 ## 项目结构
 
