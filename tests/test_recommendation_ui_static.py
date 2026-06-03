@@ -16,7 +16,7 @@ class RecommendationUiStaticTest(unittest.TestCase):
         self.assertIn("profileGenres", source)
         self.assertIn("modelStatus", source)
         self.assertIn("bookCard(book, { favoriteToggle: true })", source)
-        self.assertNotIn("推荐原因：", source)
+        self.assertNotIn("Recommendation reason:", source)
         self.assertIn("data.summary ? `<div class=\"ml-summary\">", source)
 
     def test_profile_keywords_hide_debug_weights_but_genres_keep_counts(self) -> None:
@@ -48,6 +48,6 @@ class RecommendationUiStaticTest(unittest.TestCase):
     def test_model_unavailable_state_explains_fallback_recommendations(self) -> None:
         source = APP_JS.read_text(encoding="utf-8")
 
-        self.assertIn("未训练也可使用，当前展示热门高评分推荐", source)
-        self.assertIn("模型加载失败，已切换为热门推荐", source)
+        self.assertIn("You can use the app without a trained model. Popular highly rated books are shown now.", source)
+        self.assertIn("Model loading failed. Showing popular recommendations instead.", source)
         self.assertIn("modelStatus.reason", source)

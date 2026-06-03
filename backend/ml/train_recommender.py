@@ -12,6 +12,8 @@ DEFAULT_BOOKS_CSV = PROJECT_ROOT / "backend" / "data" / "dataset" / "books_10k.c
 DEFAULT_INTERACTIONS_CSV = PROJECT_ROOT / "backend" / "data" / "dataset" / "interactions_10k.csv"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "backend" / "data" / "models" / "recommender.joblib"
 
+# Uses scikit-learn SVD and TF-IDF on the Goodreads 10k CSV data shipped with this project.
+
 
 def book_document(row: dict[str, str]) -> str:
     fields = (
@@ -32,6 +34,7 @@ def interaction_strength(row: dict[str, str]) -> float:
     is_reviewed = int_or_zero(row.get("is_reviewed"))
     if rating <= 0 and not is_read and not is_reviewed:
         return 0.0
+    # Ratings carry the strongest signal; read/review flags keep unrated interactions useful.
     return (rating / 5.0 if rating else 0.35) + (0.25 if is_read else 0.0) + (0.2 if is_reviewed else 0.0)
 
 
@@ -118,6 +121,7 @@ def train_recommender(
         shape=(len(book_ids), len(user_id_to_index)),
         dtype=float,
     )
+    # TruncatedSVD requires fewer components than the smallest matrix dimension.
     max_components = max(1, min(n_components, min(item_user.shape) - 1))
     svd = TruncatedSVD(n_components=max_components, algorithm="arpack", random_state=42)
     item_factors = normalize(svd.fit_transform(item_user))
