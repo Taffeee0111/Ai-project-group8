@@ -11,19 +11,16 @@ import re
 import sqlite3
 import time
 import urllib.parse
-import zipfile
 from collections import Counter, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from xml.etree import ElementTree as ET
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "backend" / "data"
 DB_PATH = DATA_DIR / "library.db"
 FRONTEND_DIR = PROJECT_ROOT / "frontend" / "static"
-BOOK_DOCX = DATA_DIR / "book_collection_filled_1500.docx"
 DATASET_DIR = DATA_DIR / "dataset"
 DATASET_BOOKS_CSV = DATASET_DIR / "books_10k.csv"
 RECOMMENDER_MODEL_PATH = DATA_DIR / "models" / "recommender.joblib"
@@ -128,30 +125,6 @@ def parse_auth_token(token: str) -> int | None:
     if hmac.compare_digest(signature, auth_signature(user_id)):
         return user_id
     return None
-
-
-def parse_docx_table(path: Path) -> list[dict[str, str]]:
-    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    with zipfile.ZipFile(path) as docx:
-        xml = docx.read("word/document.xml")
-    root = ET.fromstring(xml)
-    rows: list[list[str]] = []
-    for tr in root.findall(".//w:tbl/w:tr", ns):
-        values: list[str] = []
-        for tc in tr.findall("./w:tc", ns):
-            text = "".join(t.text or "" for t in tc.findall(".//w:t", ns)).strip()
-            values.append(text)
-        if values:
-            rows.append(values)
-    if not rows:
-        return []
-    header = rows[0]
-    records = []
-    for row in rows[1:]:
-        if len(row) < len(header):
-            row += [""] * (len(header) - len(row))
-        records.append(dict(zip(header, row)))
-    return records
 
 
 def int_or_none(value: Any) -> int | None:
@@ -319,66 +292,6 @@ def reading_seats() -> list[tuple[int, int]]:
     return seats
 
 
-def assign_books_to_shelves(records: list[dict[str, str]]) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, str]]] = {}
-    order: list[str] = []
-    for record in records:
-        category = record.get("标签", "").strip() or "未分类"
-        if category not in grouped:
-            grouped[category] = []
-            order.append(category)
-        grouped[category].append(record)
-
-    pure: list[tuple[str, dict[str, str]]] = []
-    remainder: list[tuple[str, dict[str, str]]] = []
-    for category in order:
-        books = grouped[category]
-        pure_count = (len(books) // 5) * 5
-        pure.extend((category, book) for book in books[:pure_count])
-        remainder.extend((category, book) for book in books[pure_count:])
-
-    ordered = pure + remainder
-    assigned = []
-    for index, (category, record) in enumerate(ordered, start=1):
-        assigned.append(
-            {
-                "book_id": f"B{index:04d}",
-                "source_index": record.get("序号", str(index)),
-                "title": record.get("书名", f"Book {index}"),
-                "author": record.get("作者", "Unknown"),
-                "pages": record.get("页数（可选）", ""),
-                "description": record.get("简介（可选）", ""),
-                "category": category,
-                "shelf_id": shelf_id_for_book(index),
-                "shelf_slot": ((index - 1) // len(generate_shelves())) + 1,
-                "status": "available",
-            }
-        )
-    return assigned
-
-
-def fallback_books() -> list[dict[str, Any]]:
-    categories = ["文学", "奇幻", "历史", "青春", "言情", "推理", "传记", "科幻", "恐怖", "悬疑"]
-    books = []
-    for i in range(1, 151):
-        cat = categories[(i - 1) % len(categories)]
-        books.append(
-            {
-                "book_id": f"B{i:04d}",
-                "source_index": str(i),
-                "title": f"{cat}示例图书 {i}",
-                "author": "Sample Author",
-                "pages": "300",
-                "description": f"一本用于演示{cat}分类搜索和推荐的图书。",
-                "category": cat,
-                "shelf_id": shelf_id_for_book(i),
-                "shelf_slot": ((i - 1) // len(generate_shelves())) + 1,
-                "status": "available",
-            }
-        )
-    return books
-
-
 def init_db(verbose: bool = False) -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
@@ -452,26 +365,17 @@ def init_db(verbose: bool = False) -> None:
             if verbose:
                 print("Importing book data. First startup may take a moment...")
             books = dataset_books_from_csv(shelf_ids)
-            if books:
-                base_columns = ["book_id", "source_index", "title", "author", "pages", "description", "category", "shelf_id", "shelf_slot", "status"]
-                columns = base_columns + list(BOOK_DATASET_COLUMNS.keys())
-                conn.executemany(
-                    f"""
-                    INSERT INTO books({",".join(columns)})
-                    VALUES({",".join(":" + column for column in columns)})
-                    """,
-                    books,
-                )
-            else:
-                records = parse_docx_table(BOOK_DOCX) if BOOK_DOCX.exists() else []
-                books = assign_books_to_shelves(records) if records else fallback_books()
-                conn.executemany(
-                    """
-                    INSERT INTO books(book_id,source_index,title,author,pages,description,category,shelf_id,shelf_slot,status)
-                    VALUES(:book_id,:source_index,:title,:author,:pages,:description,:category,:shelf_id,:shelf_slot,:status)
-                    """,
-                    books,
-                )
+            if not books:
+                raise FileNotFoundError(f"Required book dataset not found or empty: {DATASET_BOOKS_CSV}")
+            base_columns = ["book_id", "source_index", "title", "author", "pages", "description", "category", "shelf_id", "shelf_slot", "status"]
+            columns = base_columns + list(BOOK_DATASET_COLUMNS.keys())
+            conn.executemany(
+                f"""
+                INSERT INTO books({",".join(columns)})
+                VALUES({",".join(":" + column for column in columns)})
+                """,
+                books,
+            )
         else:
             rows = conn.execute("SELECT id FROM books ORDER BY id").fetchall()
             conn.executemany(
@@ -659,6 +563,7 @@ def csp_path_domain(start: tuple[int, int], target: tuple[int, int]) -> dict[str
     original = walkable_domain(target)
     direct_distance = manhattan_distance(start, target)
     detour_allowance = max(8, math.ceil(direct_distance * 0.55))
+    # CSP pruning narrows the grid to cells that can still plausibly lie on a short route.
     allowed = {
         point
         for point in original
@@ -713,6 +618,7 @@ def run_path_search(
         return {"path": [], "distance": None, "expanded": expanded}
 
     if algorithm == "bfs":
+        # BFS compares pure step count; crowded cells are reflected only in the reported path cost.
         queue = deque([start])
         came_from = {start: None}
         while queue:
@@ -727,6 +633,7 @@ def run_path_search(
                     came_from[nxt] = current
                     queue.append(nxt)
     else:
+        # UCS and A* optimize accumulated movement cost, with A* adding the selected heuristic.
         heap: list[tuple[float, int, tuple[int, int]]] = [(heuristic(start, target, algorithm) if algorithm.startswith("astar_") else 0, 0, start)]
         came_from = {start: None}
         cost = {start: 0}
@@ -767,6 +674,7 @@ def search_path(
     result = run_path_search(start, target, algorithm, domain["allowed"])
     constrained_expanded = int(result.get("expanded") or 0)
     if result["distance"] is None:
+        # If pruning removes the only viable route, fall back so CSP cannot break the user task.
         fallback = run_path_search(start, target, algorithm)
         fallback["expanded"] = constrained_expanded + int(fallback.get("expanded") or 0)
         result = fallback
@@ -793,14 +701,14 @@ def pickup_point(shelf: sqlite3.Row) -> tuple[int, int]:
 def pickup_side(shelf_row: int, shelf_col: int, pickup: tuple[int, int]) -> str:
     row, col = pickup
     if row == shelf_row and col == shelf_col - 1:
-        return "左侧通道"
+        return "left aisle"
     if row == shelf_row and col == shelf_col + 1:
-        return "右侧通道"
+        return "right aisle"
     if row == shelf_row - 1 and col == shelf_col:
-        return "上方通道"
+        return "upper aisle"
     if row == shelf_row + 1 and col == shelf_col:
-        return "下方通道"
-    return "附近通道"
+        return "lower aisle"
+    return "nearby aisle"
 
 
 def movement_instructions(path: list[list[int]]) -> list[str]:
@@ -808,10 +716,10 @@ def movement_instructions(path: list[list[int]]) -> list[str]:
         return []
 
     directions = {
-        (1, 0): "向下",
-        (-1, 0): "向上",
-        (0, 1): "向右",
-        (0, -1): "向左",
+        (1, 0): "down",
+        (-1, 0): "up",
+        (0, 1): "right",
+        (0, -1): "left",
     }
     instructions = []
     current_direction = None
@@ -819,17 +727,17 @@ def movement_instructions(path: list[list[int]]) -> list[str]:
 
     for prev, current in zip(path, path[1:]):
         delta = (current[0] - prev[0], current[1] - prev[1])
-        direction = directions.get(delta, "移动")
+        direction = directions.get(delta, "move")
         if direction == current_direction:
             steps += 1
         else:
             if current_direction:
-                instructions.append(f"{current_direction}走 {steps} 格")
+                instructions.append(f"{current_direction} {steps} cells")
             current_direction = direction
             steps = 1
 
     if current_direction:
-        instructions.append(f"{current_direction}走 {steps} 格")
+        instructions.append(f"{current_direction} {steps} cells")
     return instructions
 
 
@@ -1144,11 +1052,11 @@ class Handler(BaseHTTPRequestHandler):
                 password = data.get("password") or ""
                 confirm = data.get("confirmPassword")
                 if not username or not password:
-                    return json_response(self, 400, {"error": "请提供用户名和密码"})
+                    return json_response(self, 400, {"error": "Provide a username and password"})
                 if len(password) < 6:
-                    return json_response(self, 400, {"error": "密码至少需要 6 位"})
+                    return json_response(self, 400, {"error": "Password must be at least 6 characters"})
                 if confirm is not None and password != confirm:
-                    return json_response(self, 400, {"error": "两次输入的密码不一致"})
+                    return json_response(self, 400, {"error": "The passwords do not match"})
                 try:
                     conn.execute(
                         "INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)",
@@ -1156,12 +1064,12 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return json_response(self, 201, {"ok": True})
                 except sqlite3.IntegrityError:
-                    return json_response(self, 409, {"error": "用户名已存在"})
+                    return json_response(self, 409, {"error": "Username already exists"})
 
             if path == "/api/auth/login":
                 user = conn.execute("SELECT * FROM users WHERE username=?", (data.get("username"),)).fetchone()
                 if not user or user["password_hash"] != hash_password(data.get("password", "")):
-                    return json_response(self, 401, {"error": "用户名或密码错误"})
+                    return json_response(self, 401, {"error": "Incorrect username or password"})
                 token = create_auth_token(user["id"])
                 TOKENS[token] = user["id"]
                 conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now(), user["id"]))
@@ -1173,10 +1081,10 @@ class Handler(BaseHTTPRequestHandler):
                 current_password = data.get("currentPassword", "")
                 new_password = data.get("newPassword", "")
                 if len(new_password) < 6:
-                    return json_response(self, 400, {"error": "新密码至少需要 6 位"})
+                    return json_response(self, 400, {"error": "New password must be at least 6 characters"})
                 user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
                 if not user or user["password_hash"] != hash_password(current_password):
-                    return json_response(self, 401, {"error": "当前密码不正确"})
+                    return json_response(self, 401, {"error": "Current password is incorrect"})
                 conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), user_id))
                 return json_response(self, 200, {"ok": True})
 
@@ -1189,15 +1097,6 @@ class Handler(BaseHTTPRequestHandler):
                     (user_id, book_id, now()),
                 )
                 return json_response(self, 200, {"ok": True})
-
-            if path == "/api/pickup/plan":
-                if not user_id:
-                    return json_response(self, 401, {"error": "Unauthorized"})
-                algorithm = normalize_algorithm(data.get("algorithm"))
-                book_ids = [int(x) for x in data.get("bookIds", [])]
-                end = parse_end_point(data.get("end"))
-                constraints_enabled = normalize_bool(data.get("constraintsEnabled"))
-                return json_response(self, 200, plan_pickup(conn, book_ids, algorithm, end, constraints_enabled))
 
             if path == "/api/pickup/solve":
                 if not user_id:
@@ -1546,6 +1445,7 @@ def svd_recommendations(
     favorite_indices = [book_id_to_index[book_id] for book_id in favorite_book_ids if book_id in book_id_to_index]
     if item_factors is None or not favorite_indices:
         return []
+    # Average favorite-book embeddings into a lightweight user profile vector.
     user_vector = np.asarray(item_factors[favorite_indices]).mean(axis=0)
     norm = float(np.linalg.norm(user_vector))
     if norm <= 0:
@@ -1564,7 +1464,7 @@ def svd_recommendations(
         ranked.append((normalized_score, book_id))
     ranked.sort(reverse=True, key=lambda item: item[0])
     return [
-        scored_item(book_rows[book_id], score, "svd_collaborative_filtering", "机器学习推荐：与你收藏图书的协同过滤向量相似。")
+        scored_item(book_rows[book_id], score, "svd_collaborative_filtering", "ML recommendation: similar to the collaborative-filtering vectors of your favorite books.")
         for score, book_id in ranked[:limit]
     ]
 
@@ -1598,7 +1498,7 @@ def content_cold_start_recommendations(
         ranked.append((normalized_score, book_id))
     ranked.sort(reverse=True, key=lambda item: item[0])
     return [
-        scored_item(book_rows[book_id], score, "content_cold_start", "机器学习推荐：根据最近搜索词匹配图书内容特征。")
+        scored_item(book_rows[book_id], score, "content_cold_start", "ML recommendation: matched to book content features from your recent searches.")
         for score, book_id in ranked[:limit]
     ]
 
@@ -1629,7 +1529,7 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
     if cache_key in RECOMMENDATION_CACHE:
         return [dict(item) for item in RECOMMENDATION_CACHE[cache_key]]
     if not user_id:
-        result = popularity_fallback_recommendations(conn, user_id, limit, "登录后可根据收藏和搜索历史生成机器学习推荐。")
+        result = popularity_fallback_recommendations(conn, user_id, limit, "Sign in to generate ML recommendations from favorites and search history.")
         RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
         return result
 
@@ -1637,17 +1537,18 @@ def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -
     favs = favorite_rows(conn, user_id)
     status = load_recommender_model()
     if not status.get("available"):
-        result = popularity_fallback_recommendations(conn, user_id, limit, "模型尚未训练，暂时显示热门高评分馆藏。")
+        result = popularity_fallback_recommendations(conn, user_id, limit, "The model has not been trained yet, so popular highly rated books are shown.")
         RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
         return result
 
     model = status["model"]
     book_rows = book_rows_by_book_id(conn)
+    # Prefer stronger user signals first, then fall back so recommendations never block the app.
     result = svd_recommendations(model, book_rows, favs, limit) if favs else []
     if not result:
         result = content_cold_start_recommendations(model, book_rows, history, favs, limit)
     if not result:
-        result = popularity_fallback_recommendations(conn, user_id, limit, "暂无足够用户信号，显示热门高评分馆藏。")
+        result = popularity_fallback_recommendations(conn, user_id, limit, "Not enough user signals yet, so popular highly rated books are shown.")
     RECOMMENDATION_CACHE[cache_key] = [dict(item) for item in result]
     return result
 
@@ -1682,7 +1583,7 @@ def plan_pickup(
     solver_expanded = 0
     total_runtime = 0.0
     constraint_stats = empty_constraint_stats()
-    previous_label = "入口"
+    previous_label = "Entrance"
 
     while unvisited:
         best = None
@@ -1718,7 +1619,7 @@ def plan_pickup(
                 "runtimeMs": segment["runtimeMs"],
                 "path": segment["path"],
                 "instructions": movement_instructions(segment["path"]),
-                "summary": f"从{previous_label}出发，到达 {target['shelf_id']} {side}，取《{target['title']}》。",
+                "summary": f"Start from {previous_label}, reach {target['shelf_id']} via the {side}, and pick up {target['title']}.",
             }
         )
         current = tuple(target["pickup"])
@@ -1736,13 +1637,13 @@ def plan_pickup(
             {
                 "type": "seat",
                 "from": previous_label,
-                "to": "阅读区座位",
+                "to": "Reading-area seat",
                 "distance": end_segment["distance"],
                 "expanded": end_segment["expanded"],
                 "runtimeMs": end_segment["runtimeMs"],
                 "path": end_segment["path"],
                 "instructions": movement_instructions(end_segment["path"]),
-                "summary": f"从{previous_label}前往阅读区座位，完成本次取书。",
+                "summary": f"Go from {previous_label} to the reading-area seat and finish this pickup task.",
             }
         )
 
@@ -1825,6 +1726,7 @@ def solve_pickup(
 
     started = time.perf_counter()
     points = compute_keypoints(targets, end)
+    # Precompute every directed pair once so greedy and 2-opt can compare orders cheaply.
     pair_results, pre_expanded, _pre_runtime, constraint_stats = precompute_paths(points, algorithm, constraints_enabled)
 
     if method == "greedy":
@@ -1928,6 +1830,7 @@ def greedy_two_opt_pickup_order(
     pair_results: dict[tuple[int, int], dict[str, Any]],
     target_count: int,
 ) -> tuple[list[int], int]:
+    # Start with greedy nearest-neighbor order, then use 2-opt reversals to reduce route cost.
     order, solver_expanded = greedy_pickup_order(pair_results, target_count)
     if len(order) < 3:
         return order, solver_expanded
@@ -1943,6 +1846,7 @@ def greedy_two_opt_pickup_order(
             for j in range(i + 2, len(order) + 1):
                 if i == 0 and j == len(order):
                     continue
+                # 2-opt tests whether reversing a middle segment lowers the full route cost.
                 solver_expanded += 1
                 candidate = order[:i] + list(reversed(order[i:j])) + order[j:]
                 candidate_cost = route_order_cost(pair_results, candidate, target_count)
@@ -1970,7 +1874,7 @@ def plan_pickup_with_order(
     total_distance = 0
     total_expanded = 0
     total_runtime = 0.0
-    previous_label = "入口"
+    previous_label = "Entrance"
 
     for t_idx in order:
         target = targets[t_idx - 1]
@@ -2000,7 +1904,7 @@ def plan_pickup_with_order(
                 "runtimeMs": float(seg.get("runtimeMs") or 0.0),
                 "path": seg["path"],
                 "instructions": movement_instructions(seg["path"]),
-                "summary": f"从{previous_label}出发，到达 {target['shelf_id']} {side}，取《{target['title']}》。",
+                "summary": f"Start from {previous_label}, reach {target['shelf_id']} via the {side}, and pick up {target['title']}.",
             }
         )
         current_idx = t_idx
@@ -2017,13 +1921,13 @@ def plan_pickup_with_order(
             {
                 "type": "seat",
                 "from": previous_label,
-                "to": "阅读区座位",
+                "to": "Reading-area seat",
                 "distance": int(end_seg["distance"]),
                 "expanded": int(end_seg.get("expanded") or 0),
                 "runtimeMs": float(end_seg.get("runtimeMs") or 0.0),
                 "path": end_seg["path"],
                 "instructions": movement_instructions(end_seg["path"]),
-                "summary": f"从{previous_label}前往阅读区座位，完成本次取书。",
+                "summary": f"Go from {previous_label} to the reading-area seat and finish this pickup task.",
             }
         )
 

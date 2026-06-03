@@ -1,34 +1,34 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="图书馆智能借阅系统：搜索图书、查看推荐，并规划馆内取书路线。" />
+    <meta name="description" content="Intelligent library borrowing system: search books, view recommendations, and plan in-library pickup routes." />
     <meta name="theme-color" content="#0f1b24" />
-    <title>图书馆智能借阅系统</title>
+    <title>Intelligent Library Borrowing System</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <a class="skip-link" href="#mainContent">跳到主要内容</a>
+    <a class="skip-link" href="#mainContent">Skip to main content</a>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">AI</span>
           <div>
-            <strong>智能借阅</strong>
+            <strong>Smart Borrowing</strong>
             <small>Library Search & Path Planning</small>
           </div>
         </div>
         <nav class="nav">
-          <button class="nav-button active" data-page="search">搜索</button>
-          <button class="nav-button" data-page="pickup">取书</button>
-          <button class="nav-button" data-page="profile">个人</button>
-          <button class="nav-button" data-page="login">登录</button>
+          <button class="nav-button active" data-page="search">Search</button>
+          <button class="nav-button" data-page="pickup">Pickup</button>
+          <button class="nav-button" data-page="profile">Profile</button>
+          <button class="nav-button" data-page="login">Sign In</button>
         </nav>
         <div class="system-card">
-          <span>馆藏</span>
+          <span>Books</span>
           <strong id="bookCount">-</strong>
-          <span>书架</span>
+          <span>Shelves</span>
           <strong id="shelfCount">-</strong>
         </div>
       </aside>
@@ -36,42 +36,42 @@
       <main id="mainContent" tabindex="-1">
         <header class="topbar">
           <div>
-            <h1 id="pageTitle">图书搜索</h1>
+            <h1 id="pageTitle">Book Search</h1>
             <p id="pageSubtitle"></p>
           </div>
-          <div class="user-chip" id="userChip">未登录</div>
+          <div class="user-chip" id="userChip">Not signed in</div>
         </header>
 
         <section class="page" id="loginPage">
           <div class="auth-panel">
             <div class="tabs">
-              <button class="tab active" id="loginTab">登录</button>
-              <button class="tab" id="registerTab">注册</button>
+              <button class="tab active" id="loginTab">Sign In</button>
+              <button class="tab" id="registerTab">Sign Up</button>
             </div>
-            <label>用户名</label>
+            <label>Username</label>
             <input id="authUsername" value="demo" autocomplete="username" />
-            <label>密码</label>
+            <label>Password</label>
             <div class="password-field">
               <input id="authPassword" type="password" value="demo123" autocomplete="current-password" />
-              <button type="button" class="toggle-password" data-target="authPassword" aria-label="显示密码" title="显示密码">👁</button>
+              <button type="button" class="toggle-password" data-target="authPassword" aria-label="Show password" title="Show password">👁</button>
             </div>
-            <label id="authConfirmLabel" style="display:none">确认密码</label>
+            <label id="authConfirmLabel" style="display:none">Confirm password</label>
             <div class="password-field" id="authConfirmWrap" style="display:none">
               <input id="authConfirmPassword" type="password" autocomplete="new-password" />
-              <button type="button" class="toggle-password" data-target="authConfirmPassword" aria-label="显示密码" title="显示密码">👁</button>
+              <button type="button" class="toggle-password" data-target="authConfirmPassword" aria-label="Show password" title="Show password">👁</button>
             </div>
-            <button class="primary" id="authSubmit">登录</button>
-            <p class="hint" id="authMessage">演示账号：demo / demo123</p>
+            <button class="primary" id="authSubmit">Sign In</button>
+            <p class="hint" id="authMessage">Demo account: demo / demo123</p>
           </div>
         </section>
 
         <section class="page active" id="searchPage">
           <div class="search-row">
-            <input id="searchInput" placeholder="输入书名、作者、标签或简介关键词" />
-            <button class="primary" id="searchButton">搜索</button>
+            <input id="searchInput" placeholder="Search by title, author, tag, or description" />
+            <button class="primary" id="searchButton">Search</button>
           </div>
           <div class="advanced-search-panel" id="advancedSearchPanel">
-            <button class="filter-reset-button" id="resetSearchFilters" type="button" title="重置筛选" aria-label="重置筛选">↻</button>
+            <button class="filter-reset-button" id="resetSearchFilters" type="button" title="Reset filters" aria-label="Reset filters">↻</button>
             <div class="filter-grid">
               <label>
                 Genre
@@ -104,15 +104,15 @@
           <div class="content-grid">
             <section>
               <div class="section-title">
-                <h2>搜索结果</h2>
-                <span id="resultCount">0 本</span>
+                <h2>Search Results</h2>
+                <span id="resultCount">0 books</span>
               </div>
               <div class="book-list" id="bookResults"></div>
             </section>
             <section>
               <div class="section-title">
-                <h2>ML 推荐分析</h2>
-                <span>个性化推荐</span>
+                <h2>ML Recommendation Analysis</h2>
+                <span>Personalized recommendations</span>
               </div>
               <div class="ml-profile" id="mlProfile"></div>
               <div class="book-list compact" id="recommendations"></div>
@@ -124,56 +124,56 @@
           <div class="pickup-workbench" data-mobile-view="map">
             <section class="pickup-panel workbench-sidebar" data-workbench-panel="tasks">
               <div class="section-title route-control-title">
-                <h2>路线控制</h2>
+                <h2>Route Controls</h2>
               </div>
               <div class="route-controls" id="routePlaybackControls">
-                <button class="primary" id="planButton">生成路径</button>
+                <button class="primary" id="planButton">Generate Route</button>
                 <div class="route-control-actions">
-                  <button class="route-control-button route-nav-button" id="previousRouteStep" title="上一步" aria-label="上一步">&lt;&lt;</button>
-                  <button class="route-control-button play-toggle-button" id="playRouteButton" disabled title="播放 / 暂停" aria-label="播放 / 暂停">
+                  <button class="route-control-button route-nav-button" id="previousRouteStep" title="Previous step" aria-label="Previous step">&lt;&lt;</button>
+                  <button class="route-control-button play-toggle-button" id="playRouteButton" disabled title="Play / Pause" aria-label="Play / Pause">
                     ▶
                   </button>
-                  <button class="route-control-button route-nav-button" id="nextRouteStep" title="下一步" aria-label="下一步">&gt;&gt;</button>
+                  <button class="route-control-button route-nav-button" id="nextRouteStep" title="Next step" aria-label="Next step">&gt;&gt;</button>
                 </div>
               </div>
               <div class="section-title">
-                <h2>本次取书</h2>
+                <h2>Pickup List</h2>
                 <div class="pickup-title-actions">
-                  <span id="pickupCount">0 本</span>
-                  <button class="add-pickup-button" id="addPickupBookButton" title="添加想取的书" aria-label="添加想取的书">+</button>
-                  <button class="clear-pickup-button" id="clearPickupButton" title="清空本次取书" aria-label="清空本次取书">🗑</button>
+                  <span id="pickupCount">0 books</span>
+                  <button class="add-pickup-button" id="addPickupBookButton" title="Add books to pick up" aria-label="Add books to pick up">+</button>
+                  <button class="clear-pickup-button" id="clearPickupButton" title="Clear pickup list" aria-label="Clear pickup list">🗑</button>
                 </div>
               </div>
               <div id="pickupSelection" class="pickup-selection"></div>
               <div class="add-book-menu" id="addBookMenu" hidden>
-                <button id="openFavoritesButton">从我的收藏选择</button>
-                <button id="openSearchPickerButton">搜索想看的书</button>
+                <button id="openFavoritesButton">Choose from Favorites</button>
+                <button id="openSearchPickerButton">Search Books</button>
               </div>
-              <div class="status-note" id="selectedSeatInfo">终点座位：无</div>
+              <div class="status-note" id="selectedSeatInfo">Destination seat: none</div>
             </section>
             <section class="map-workspace">
               <div class="map-panel">
                 <div class="map-stage">
                   <div class="legend map-legend-overlay">
                     <div class="legend-items">
-                      <span><i class="cell entrance"></i>入口</span>
-                      <span><i class="cell reading"></i>阅读区</span>
-                      <span><i class="cell crowded"></i>拥堵区</span>
-                      <span><i class="cell shelf"></i>书架</span>
-                      <span><i class="cell target"></i>目标</span>
-                      <span><i class="cell seat"></i>座位</span>
+                      <span><i class="cell entrance"></i>Entrance</span>
+                      <span><i class="cell reading"></i>Reading area</span>
+                      <span><i class="cell crowded"></i>Crowded area</span>
+                      <span><i class="cell shelf"></i>Shelves</span>
+                      <span><i class="cell target"></i>Target</span>
+                      <span><i class="cell seat"></i>Seat</span>
                       <span>
                         <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
                           <path d="M2 7 H22" />
                           <path d="M18 3 L26 7 L18 11 Z" />
                         </svg>
-                        路线
+                        Route
                       </span>
                     </div>
-                    <span id="mapShelfCount">书架布局</span>
+                    <span id="mapShelfCount">Shelf layout</span>
                   </div>
                   <div class="map-canvas">
-                    <button class="map-expand-button" id="openMapModal" type="button" data-tool-action="expand-map" aria-label="放大地图" title="放大地图">⛶</button>
+                    <button class="map-expand-button" id="openMapModal" type="button" data-tool-action="expand-map" aria-label="Expand map" title="Expand map">⛶</button>
                     <div id="libraryGrid" class="library-grid"></div>
                   </div>
                 </div>
@@ -181,73 +181,73 @@
               <div class="floating-tools">
                 <section class="algorithm-card csp-tool-card floating-tool-panel collapsed" id="cspTools">
                   <div class="section-title tool-panel-title">
-                    <h2>CSP 约束</h2>
+                    <h2>CSP Constraints</h2>
                   </div>
                   <div class="tool-panel-body">
                     <label class="constraint-toggle">
                       <span class="constraint-toggle-copy">
-                        <strong>CSP 约束模式</strong>
-                        <small>普通 / 约束剪枝</small>
+                        <strong>CSP pruning mode</strong>
+                        <small>Standard / pruning</small>
                       </span>
                       <input id="constraintsToggle" type="checkbox" />
                       <span class="constraint-switch" aria-hidden="true"></span>
                     </label>
                     <div class="metrics analysis-empty" id="cspMetrics">
-                      <strong>开启 CSP 后生成路径</strong>
+                      <strong>Enable CSP, then generate a route</strong>
                     </div>
                   </div>
                 </section>
                 <section class="algorithm-card algorithm-choice-card floating-tool-panel collapsed" id="algorithmTools">
                   <div class="section-title tool-panel-title">
-                    <h2>算法选择</h2>
+                    <h2>Algorithm Selection</h2>
                   </div>
                   <div class="tool-panel-body">
                     <div class="algorithm-choice">
                       <div class="algorithm-label-row">
-                        <label class="top-label" for="algorithmSelect">两点路径算法</label>
-                        <button class="hint-button" type="button" aria-label="两点路径算法说明">
+                        <label class="top-label" for="algorithmSelect">Two-point path algorithm</label>
+                        <button class="hint-button" type="button" aria-label="Two-point path algorithm help">
                           i
-                          <span class="hint-popover">用于计算入口、书架取书点和座位之间的最短路径。</span>
+                          <span class="hint-popover">Calculates the shortest path between the entrance, shelf pickup points, and the seat.</span>
                         </button>
                       </div>
                       <select id="algorithmSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                        <option value="">请选择两点路径算法</option>
+                        <option value="">Select a two-point path algorithm</option>
                         <option value="bfs">BFS</option>
                         <option value="ucs">Uniform Cost Search</option>
-                        <option value="astar_manhattan" selected>A* 曼哈顿</option>
-                        <option value="astar_euclidean">A* 欧几里得</option>
+                        <option value="astar_manhattan" selected>A* Manhattan</option>
+                        <option value="astar_euclidean">A* Euclidean</option>
                       </select>
                       <div class="algorithm-options" data-algorithm-group="algorithmSelect">
                         <button type="button" class="algorithm-option" data-value="bfs"><span></span>BFS</button>
                         <button type="button" class="algorithm-option" data-value="ucs"><span></span>Uniform Cost Search</button>
-                        <button type="button" class="algorithm-option" data-value="astar_manhattan"><span></span>A* 曼哈顿</button>
-                        <button type="button" class="algorithm-option" data-value="astar_euclidean"><span></span>A* 欧几里得</button>
+                        <button type="button" class="algorithm-option" data-value="astar_manhattan"><span></span>A* Manhattan</button>
+                        <button type="button" class="algorithm-option" data-value="astar_euclidean"><span></span>A* Euclidean</button>
                       </div>
                     </div>
                     <div class="algorithm-choice">
                       <div class="algorithm-label-row">
-                        <label class="top-label" for="solverSelect">整体取书算法</label>
-                        <button class="hint-button" type="button" aria-label="整体取书算法说明">
+                        <label class="top-label" for="solverSelect">Visit order algorithm</label>
+                        <button class="hint-button" type="button" aria-label="Visit order algorithm help">
                           i
-                          <span class="hint-popover">用于决定多本书的访问顺序，降低本次取书总代价。</span>
+                          <span class="hint-popover">Chooses the visit order for multiple books to reduce total pickup cost.</span>
                         </button>
                       </div>
                       <select id="solverSelect" class="visually-hidden" aria-hidden="true" tabindex="-1">
-                        <option value="">请选择整体取书算法</option>
-                        <option value="greedy" selected>贪心最近邻（Greedy）</option>
-                        <option value="greedy_2opt">贪心 + 2-opt 优化</option>
+                        <option value="">Select a visit order algorithm</option>
+                        <option value="greedy" selected>Greedy Nearest Neighbor</option>
+                        <option value="greedy_2opt">Greedy + 2-opt</option>
                       </select>
                       <div class="algorithm-options" data-algorithm-group="solverSelect">
-                        <button type="button" class="algorithm-option" data-value="greedy"><span></span>贪心最近邻（Greedy）</button>
-                        <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>贪心 + 2-opt 优化</button>
+                        <button type="button" class="algorithm-option" data-value="greedy"><span></span>Greedy Nearest Neighbor</button>
+                        <button type="button" class="algorithm-option" data-value="greedy_2opt"><span></span>Greedy + 2-opt</button>
                       </div>
                     </div>
                   </div>
                 </section>
                 <section class="algorithm-card route-steps-card floating-tool-panel" id="routeStepsTools">
                   <div class="section-title tool-panel-title">
-                    <h2>取书步骤</h2>
-                    <span id="routeStepCount">0 步</span>
+                    <h2>Pickup Steps</h2>
+                    <span id="routeStepCount">0 steps</span>
                   </div>
                   <div class="tool-panel-body">
                     <div class="route-steps" id="routeSteps"></div>
@@ -255,26 +255,26 @@
                 </section>
                 <section class="algorithm-card algorithm-analysis-card floating-tool-panel collapsed" id="metricsTools">
                   <div class="section-title tool-panel-title">
-                    <h2>算法指标</h2>
+                    <h2>Algorithm Metrics</h2>
                   </div>
                   <div class="tool-panel-body">
                     <div class="metrics analysis-empty" id="pathMetrics">
-                      <strong>等待生成路径</strong>
+                      <strong>Waiting for route</strong>
                     </div>
                   </div>
                 </section>
               </div>
             </section>
             <aside class="tool-workspace" data-workbench-panel="tools">
-              <div class="tool-rail" aria-label="取书工具">
-                <button class="tool-toggle-button" type="button" data-tool-toggle="cspTools" aria-expanded="false" aria-label="CSP 约束" title="CSP 约束">
+              <div class="tool-rail" aria-label="Pickup tools">
+                <button class="tool-toggle-button" type="button" data-tool-toggle="cspTools" aria-expanded="false" aria-label="CSP Constraints" title="CSP Constraints">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M3 17 9 11l4 4 7-8"></path>
                     <path d="M14 7h6v6"></path>
                   </svg>
                   <span>CSP</span>
                 </button>
-                <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="算法选择" title="算法选择">
+                <button class="tool-toggle-button" type="button" data-tool-toggle="algorithmTools" aria-expanded="false" aria-label="Algorithm Selection" title="Algorithm Selection">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="6" cy="6" r="2.5"></circle>
                     <circle cx="18" cy="6" r="2.5"></circle>
@@ -283,9 +283,9 @@
                     <path d="M15.7 7.4 13.3 16"></path>
                     <path d="M8.5 6h7"></path>
                   </svg>
-                  <span>算法</span>
+                  <span>Algorithms</span>
                 </button>
-                <button class="tool-toggle-button active" type="button" data-tool-toggle="routeStepsTools" aria-expanded="true" aria-label="取书步骤" title="取书步骤">
+                <button class="tool-toggle-button active" type="button" data-tool-toggle="routeStepsTools" aria-expanded="true" aria-label="Pickup Steps" title="Pickup Steps">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M8 6h11"></path>
                     <path d="M8 12h11"></path>
@@ -295,9 +295,9 @@
                     <path d="M3.5 11.4c.5-.7 2-.6 2 .4 0 .8-1 1.2-2 2.2h2.2"></path>
                     <path d="M3.6 17h1.8l-1 1.1c.8 0 1.4.3 1.4 1 0 .8-.8 1.2-2.1.9"></path>
                   </svg>
-                  <span>步骤</span>
+                  <span>Steps</span>
                 </button>
-                <button class="tool-toggle-button" type="button" data-tool-toggle="metricsTools" aria-expanded="false" aria-label="算法指标" title="算法指标">
+                <button class="tool-toggle-button" type="button" data-tool-toggle="metricsTools" aria-expanded="false" aria-label="Algorithm Metrics" title="Algorithm Metrics">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M4 20h16"></path>
                     <path d="M6 16v-4"></path>
@@ -307,9 +307,9 @@
                     <rect x="11" y="7" width="2" height="9"></rect>
                     <rect x="17" y="9" width="2" height="7"></rect>
                   </svg>
-                  <span>指标</span>
+                  <span>Metrics</span>
                 </button>
-                <button class="tool-toggle-button" type="button" data-tool-action="compare" aria-label="多算法比较" title="多算法比较">
+                <button class="tool-toggle-button" type="button" data-tool-action="compare" aria-label="Algorithm Comparison" title="Algorithm Comparison">
                   <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 4v16"></path>
                     <path d="M6 7h12"></path>
@@ -317,14 +317,14 @@
                     <path d="M17 7 14 13h6L17 7Z"></path>
                     <path d="M9 20h6"></path>
                   </svg>
-                  <span>比较</span>
+                  <span>Compare</span>
                 </button>
               </div>
             </aside>
-            <div class="mobile-workbench-tabs" role="tablist" aria-label="取书工作台视图">
-              <button type="button" class="active" data-workbench-view="map">地图</button>
-              <button type="button" data-workbench-view="tasks">任务</button>
-              <button type="button" data-workbench-view="tools">工具</button>
+            <div class="mobile-workbench-tabs" role="tablist" aria-label="Pickup workbench views">
+              <button type="button" class="active" data-workbench-view="map">Map</button>
+              <button type="button" data-workbench-view="tasks">Tasks</button>
+              <button type="button" data-workbench-view="tools">Tools</button>
             </div>
           </div>
         </section>
@@ -333,39 +333,39 @@
           <div class="profile-grid">
             <section>
               <div class="section-title">
-                <h2>个人信息</h2>
+                <h2>Profile Information</h2>
               </div>
               <div class="profile-card" id="profileInfo"></div>
               <div class="profile-card password-card">
-                <h2>修改密码</h2>
-                <label>当前密码</label>
+                <h2>Change Password</h2>
+                <label>Current password</label>
                 <div class="password-field">
                   <input id="currentPassword" type="password" autocomplete="current-password" />
-                  <button type="button" class="toggle-password" data-target="currentPassword" aria-label="显示密码" title="显示密码">👁</button>
+                  <button type="button" class="toggle-password" data-target="currentPassword" aria-label="Show password" title="Show password">👁</button>
                 </div>
-                <label>新密码</label>
+                <label>New password</label>
                 <div class="password-field">
                   <input id="newPassword" type="password" autocomplete="new-password" />
-                  <button type="button" class="toggle-password" data-target="newPassword" aria-label="显示密码" title="显示密码">👁</button>
+                  <button type="button" class="toggle-password" data-target="newPassword" aria-label="Show password" title="Show password">👁</button>
                 </div>
-                <label>确认新密码</label>
+                <label>Confirm new password</label>
                 <div class="password-field">
                   <input id="confirmPassword" type="password" autocomplete="new-password" />
-                  <button type="button" class="toggle-password" data-target="confirmPassword" aria-label="显示密码" title="显示密码">👁</button>
+                  <button type="button" class="toggle-password" data-target="confirmPassword" aria-label="Show password" title="Show password">👁</button>
                 </div>
-                <button class="primary wide" id="changePasswordButton">更新密码</button>
+                <button class="primary wide" id="changePasswordButton">Update Password</button>
                 <p class="hint" id="passwordMessage"></p>
               </div>
             </section>
             <section>
               <div class="section-title">
-                <h2>搜索历史</h2>
+                <h2>Search History</h2>
               </div>
               <div class="history-list" id="historyList"></div>
             </section>
             <section class="span-2">
               <div class="section-title">
-                <h2>收藏图书</h2>
+                <h2>Favorite Books</h2>
               </div>
               <div class="book-list" id="profileFavorites"></div>
             </section>
@@ -377,24 +377,24 @@
       <section class="map-modal-panel" role="dialog" aria-modal="true" aria-labelledby="mapModalTitle">
         <div class="modal-head">
           <div>
-            <h2 id="mapModalTitle">30 × 30 图书馆地图</h2>
-            <p>点击绿色阅读区可选择座位终点。</p>
+            <h2 id="mapModalTitle">30 x 30 Library Map</h2>
+            <p>Click a green reading-area cell to choose the destination seat.</p>
           </div>
-          <button class="icon-button" id="closeMapModal" aria-label="关闭">×</button>
+          <button class="icon-button" id="closeMapModal" aria-label="Close">×</button>
         </div>
         <div class="legend map-modal-legend">
-          <span><i class="cell entrance"></i>入口</span>
-          <span><i class="cell reading"></i>阅读区</span>
-          <span><i class="cell crowded"></i>拥堵区</span>
-          <span><i class="cell shelf"></i>书架</span>
-          <span><i class="cell target"></i>目标</span>
-          <span><i class="cell seat"></i>座位</span>
+          <span><i class="cell entrance"></i>Entrance</span>
+          <span><i class="cell reading"></i>Reading area</span>
+          <span><i class="cell crowded"></i>Crowded area</span>
+          <span><i class="cell shelf"></i>Shelves</span>
+          <span><i class="cell target"></i>Target</span>
+          <span><i class="cell seat"></i>Seat</span>
           <span>
             <svg class="route-line-sample" viewBox="0 0 28 14" aria-hidden="true">
               <path d="M2 7 H22" />
               <path d="M18 3 L26 7 L18 11 Z" />
             </svg>
-            路线
+            Route
           </span>
         </div>
         <div id="libraryGridLarge" class="library-grid library-grid-large"></div>
@@ -402,32 +402,32 @@
     </div>
     <div class="notice-modal" id="noticeModal" hidden>
       <section class="notice-panel" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
-        <h2 id="noticeTitle">需要选择终点座位</h2>
-        <p id="noticeMessage">需要点击绿色格子来确定最终座位。</p>
-        <button class="primary" id="closeNoticeModal">知道了</button>
+        <h2 id="noticeTitle">Destination Seat Required</h2>
+        <p id="noticeMessage">Click a green cell to choose the destination seat.</p>
+        <button class="primary" id="closeNoticeModal">OK</button>
       </section>
     </div>
     <div class="modal-backdrop" id="bookPickerModal" hidden>
       <section class="book-picker" role="dialog" aria-modal="true" aria-labelledby="bookPickerTitle">
         <div class="modal-head">
           <div>
-            <h2 id="bookPickerTitle">选择图书</h2>
-            <p id="bookPickerSubtitle">勾选后加入本次取书。</p>
+            <h2 id="bookPickerTitle">Choose Books</h2>
+            <p id="bookPickerSubtitle">Select books to add them to this pickup list.</p>
           </div>
-          <button class="icon-button" id="closeBookPicker" aria-label="关闭">×</button>
+          <button class="icon-button" id="closeBookPicker" aria-label="Close">×</button>
         </div>
         <div class="picker-search" id="pickerSearchBar">
-          <input id="pickerSearchInput" placeholder="输入书名、作者、分类或简介关键词" />
-          <button class="primary" id="pickerSearchButton">搜索</button>
+          <input id="pickerSearchInput" placeholder="Search by title, author, category, or description" />
+          <button class="primary" id="pickerSearchButton">Search</button>
         </div>
         <div class="picker-toolbar">
-          <label><input type="checkbox" id="pickerSelectAll" /> 全选当前列表</label>
-          <span id="pickerStatus">0 本可选</span>
+          <label><input type="checkbox" id="pickerSelectAll" /> Select all in current list</label>
+          <span id="pickerStatus">0 books available</span>
         </div>
         <div id="pickerList" class="picker-list"></div>
         <div class="modal-actions">
-          <button id="cancelBookPicker">取消</button>
-          <button class="primary" id="confirmBookPicker">加入本次取书</button>
+          <button id="cancelBookPicker">Cancel</button>
+          <button class="primary" id="confirmBookPicker">Add to Pickup List</button>
         </div>
       </section>
     </div>
@@ -435,19 +435,19 @@
       <section class="compare-panel" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
         <div class="modal-head">
           <div>
-            <h2 id="compareTitle">算法比较</h2>
-            <p id="compareSubtitle">基于当前取书任务生成比较结果。</p>
+            <h2 id="compareTitle">Algorithm Comparison</h2>
+            <p id="compareSubtitle">Compare algorithms using the current pickup task.</p>
           </div>
-          <button class="icon-button" id="closeCompareModal" aria-label="关闭">×</button>
+          <button class="icon-button" id="closeCompareModal" aria-label="Close">×</button>
         </div>
         <div class="compare-summary" id="compareSummary"></div>
         <div class="compare-mode-actions">
-          <button id="comparePathAlgorithms" data-compare-type="path">固定整体算法，比较两点算法</button>
-          <button id="compareOrderAlgorithms" data-compare-type="order">固定两点算法，比较整体算法</button>
-          <button id="compareConstraintModes" data-compare-type="constraints">固定算法组合，比较 CSP 模式</button>
+          <button id="comparePathAlgorithms" data-compare-type="path">Fix visit order, compare path algorithms</button>
+          <button id="compareOrderAlgorithms" data-compare-type="order">Fix path algorithm, compare visit order</button>
+          <button id="compareConstraintModes" data-compare-type="constraints">Fix algorithms, compare CSP modes</button>
         </div>
         <div class="compare-table-wrap" id="compareTableWrap">
-          <div class="compare-loading">请选择一种比较方式。</div>
+          <div class="compare-loading">Choose a comparison mode.</div>
         </div>
       </section>
     </div>

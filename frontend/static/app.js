@@ -33,19 +33,19 @@ const ROUTE_COLORS = ["#2364aa", "#e4572e", "#0f8b8d", "#8a4fff", "#b7791f", "#0
 const PATH_ALGORITHMS = [
   ["bfs", "BFS"],
   ["ucs", "Uniform Cost Search"],
-  ["astar_manhattan", "A* 曼哈顿"],
-  ["astar_euclidean", "A* 欧几里得"],
+  ["astar_manhattan", "A* Manhattan"],
+  ["astar_euclidean", "A* Euclidean"],
 ];
 const ORDER_ALGORITHMS = [
-  ["greedy", "贪心最近邻"],
-  ["greedy_2opt", "贪心 + 2-opt"],
+  ["greedy", "Greedy Nearest Neighbor"],
+  ["greedy_2opt", "Greedy + 2-opt"],
 ];
 
 const titles = {
-  login: ["登录 / 注册", ""],
-  search: ["图书搜索", ""],
-  pickup: ["取书路径规划", ""],
-  profile: ["个人中心", ""],
+  login: ["Sign In / Sign Up", ""],
+  search: ["Book Search", ""],
+  pickup: ["Pickup Route Planning", ""],
+  profile: ["Profile", ""],
 };
 
 function qs(selector) {
@@ -81,10 +81,10 @@ async function api(path, options = {}) {
     } catch {
       data = {};
     }
-    if (!response.ok) throw new Error(data.error || "请求失败");
+    if (!response.ok) throw new Error(data.error || "Request failed");
     return data;
   } catch (err) {
-    if (err.name === "AbortError") throw new Error("请求超时，请稍后重试");
+    if (err.name === "AbortError") throw new Error("Request timed out. Please try again later.");
     throw err;
   } finally {
     if (timeoutId) window.clearTimeout(timeoutId);
@@ -116,21 +116,21 @@ function bookCard(book, options = {}) {
   const canToggleFavorite = options.favoriteToggle;
   const isFavorite = Boolean(book.is_favorite);
   const favoriteButton = isFavorite
-    ? `<button class="favorite-button active" data-fav-toggle="${book.id}" data-favorite="true">已收藏</button>`
-    : `<button class="favorite-button" data-fav-toggle="${book.id}" data-favorite="false">收藏</button>`;
+    ? `<button class="favorite-button active" data-fav-toggle="${book.id}" data-favorite="true">Favorited</button>`
+    : `<button class="favorite-button" data-fav-toggle="${book.id}" data-favorite="false">Favorite</button>`;
   const detailsButton = useDetails
-    ? `<button class="book-details-toggle" data-book-details-toggle="${detailId}" aria-expanded="false" aria-controls="${detailId}">详情 ▾</button>`
+    ? `<button class="book-details-toggle" data-book-details-toggle="${detailId}" aria-expanded="false" aria-controls="${detailId}">Details ▾</button>`
     : "";
   const div = document.createElement("article");
   div.className = "book-card";
   div.innerHTML = `
     <h3>${highlightText(book.title, keyword)}</h3>
     <div class="book-card-summary">
-      <div class="book-meta-line">${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "未分类", keyword)}</span></div>
-      ${useDatasetSummary ? bookPublisherLine(book, keyword) : `<div class="book-meta-line">书架 ${escapeHtml(book.shelf_id)} / 第 ${escapeHtml(book.shelf_slot)} 位 · 坐标 (${escapeHtml(book.row)}, ${escapeHtml(book.col)})</div>`}
+      <div class="book-meta-line">${highlightText(book.author || "Unknown", keyword)} · <span class="tag">${highlightText(book.category || "Uncategorized", keyword)}</span></div>
+      ${useDatasetSummary ? bookPublisherLine(book, keyword) : `<div class="book-meta-line">Shelf ${escapeHtml(book.shelf_id)} / Slot ${escapeHtml(book.shelf_slot)} · Coordinates (${escapeHtml(book.row)}, ${escapeHtml(book.col)})</div>`}
       ${useDatasetSummary ? bookMetricGrid(book) : ""}
       ${useDatasetSummary ? genrePreview(book.genres, keyword) : ""}
-      ${book.similarity_percent !== undefined && book.similarity_percent !== null ? `<br><span class="ml-score">相似度：${book.similarity_percent}%</span>` : ""}
+      ${book.similarity_percent !== undefined && book.similarity_percent !== null ? `<br><span class="ml-score">Similarity: ${book.similarity_percent}%</span>` : ""}
     </div>
     ${useDetails ? bookDetailsPanel(book, keyword, detailId) : ""}
     <div class="book-actions">
@@ -138,7 +138,7 @@ function bookCard(book, options = {}) {
       <span class="book-action-buttons">
       ${detailsButton}
       ${canToggleFavorite ? favoriteButton : ""}
-      ${options.unfavorite ? `<button data-unfav="${book.id}">取消收藏</button>` : ""}
+      ${options.unfavorite ? `<button data-unfav="${book.id}">Remove favorite</button>` : ""}
       </span>
     </div>
   `;
@@ -189,10 +189,10 @@ function bookDetailsPanel(book, keyword, detailId) {
     book.isbn ? detailRow("ISBN", highlightText(book.isbn, keyword)) : "",
     book.isbn13 ? detailRow("ISBN13", highlightText(book.isbn13, keyword)) : "",
     book.genres ? detailRow("Genres", highlightText(book.genres, keyword)) : "",
-    book.match_score ? detailRow("匹配度", escapeHtml(book.match_score)) : "",
+    book.match_score ? detailRow("Match score", escapeHtml(book.match_score)) : "",
   ].filter(Boolean);
   const preview = descriptionPreview(book.description, keyword);
-  if (preview) rows.push(detailRow("简介", preview));
+  if (preview) rows.push(detailRow("Description", preview));
   return rows.length ? `<div class="book-card-details" id="${detailId}" hidden>${rows.join("")}</div>` : "";
 }
 
@@ -278,7 +278,7 @@ function populateSelect(selector, label, values) {
 
 async function loadMe() {
   if (!state.token) {
-    qs("#userChip").textContent = "未登录";
+    qs("#userChip").textContent = "Not signed in";
     return;
   }
   try {
@@ -287,7 +287,7 @@ async function loadMe() {
   } catch {
     localStorage.removeItem("token");
     state.token = "";
-    qs("#userChip").textContent = "未登录";
+    qs("#userChip").textContent = "Not signed in";
   }
 }
 
@@ -307,15 +307,15 @@ async function searchBooks(options = {}) {
     const books = await api(`/api/books/search?${params.toString()}`, { timeoutMs: 20000 });
     list.innerHTML = "";
     if (!books.length) {
-      list.innerHTML = `<div class="state-card"><strong>没有找到匹配图书</strong>调整关键词或筛选条件后再试。</div>`;
+      list.innerHTML = `<div class="state-card"><strong>No matching books found</strong>Try adjusting the keyword or filters.</div>`;
     } else {
       books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true, highlight: keyword, datasetMeta: true, collapsibleDetails: true })));
     }
-    qs("#resultCount").textContent = `${books.length} 本`;
+    qs("#resultCount").textContent = `${books.length} books`;
     if (options.refreshRecommendations || record) scheduleRecommendationRefresh();
   } catch (err) {
-    list.innerHTML = `<div class="state-card warning"><strong>搜索暂时不可用</strong>${escapeHtml(err.message)}</div>`;
-    qs("#resultCount").textContent = "加载失败";
+    list.innerHTML = `<div class="state-card warning"><strong>Search is temporarily unavailable</strong>${escapeHtml(err.message)}</div>`;
+    qs("#resultCount").textContent = "Load failed";
   } finally {
     list.classList.remove("is-loading");
   }
@@ -367,7 +367,7 @@ async function loadRecommendations() {
   const profile = qs("#mlProfile");
   list.innerHTML = `<div class="skeleton-card"></div><div class="skeleton-card"></div>`;
   profile.classList.add("is-loading");
-  profile.innerHTML = `<div class="ml-summary">正在生成推荐结果...</div>`;
+  profile.innerHTML = `<div class="ml-summary">Generating recommendations...</div>`;
   try {
     const data = await api("/api/books/recommendations?limit=10&analysis=1", { timeoutMs: 12000 });
     if (requestId !== state.recommendationRequestId) return;
@@ -377,20 +377,20 @@ async function loadRecommendations() {
     const modelStatusNote = modelStatus.available
       ? ""
       : String(modelStatus.reason || "").startsWith("load_failed")
-        ? "模型加载失败，已切换为热门推荐"
-        : "未训练也可使用，当前展示热门高评分推荐";
+        ? "Model loading failed. Showing popular recommendations instead."
+        : "You can use the app without a trained model. Popular highly rated books are shown now.";
     profile.innerHTML = `
       ${data.summary ? `<div class="ml-summary">${escapeHtml(data.summary)}</div>` : ""}
       <div class="ml-weights">
-        <span>模型 <strong>${modelStatus.available ? "已加载" : "未训练"}</strong></span>
+        <span>Model <strong>${modelStatus.available ? "Loaded" : "Not trained"}</strong></span>
         ${modelStatus.embeddingDim ? `<span>Embedding <strong>${escapeHtml(modelStatus.embeddingDim)}</strong></span>` : ""}
-        ${modelStatus.interactionCount ? `<span>交互 <strong>${formatNumber(modelStatus.interactionCount)}</strong></span>` : ""}
+        ${modelStatus.interactionCount ? `<span>Interactions <strong>${formatNumber(modelStatus.interactionCount)}</strong></span>` : ""}
       </div>
       ${modelStatusNote ? `<div class="ml-summary">${escapeHtml(modelStatusNote)}</div>` : ""}
       <div class="ml-keywords">
         ${keywords.length
           ? keywords.map((item) => `<span>${escapeHtml(item.term)}</span>`).join("")
-          : `<span>${state.token ? "暂无用户画像关键词" : "登录后生成用户画像"}</span>`}
+          : `<span>${state.token ? "No profile keywords yet" : "Sign in to build a user profile"}</span>`}
       </div>
       <div class="ml-keywords profile-genres">
         ${profileGenres.length
@@ -401,14 +401,14 @@ async function loadRecommendations() {
     list.innerHTML = "";
     const books = data.books || [];
     if (!books.length) {
-      list.innerHTML = `<div class="state-card"><strong>暂无推荐</strong>搜索或收藏几本书后会生成更准确的结果。</div>`;
+      list.innerHTML = `<div class="state-card"><strong>No recommendations yet</strong>Search for or favorite a few books to improve recommendations.</div>`;
     } else {
       books.forEach((book) => list.appendChild(bookCard(book, { favoriteToggle: true })));
     }
   } catch (err) {
     if (requestId !== state.recommendationRequestId) return;
-    profile.innerHTML = `<div class="state-card warning"><strong>推荐暂时不可用</strong>搜索和取书功能仍可正常使用。</div>`;
-    list.innerHTML = `<div class="state-card warning"><strong>无法加载推荐</strong>${escapeHtml(err.message)}</div>`;
+    profile.innerHTML = `<div class="state-card warning"><strong>Recommendations are temporarily unavailable</strong>Search and pickup planning are still available.</div>`;
+    list.innerHTML = `<div class="state-card warning"><strong>Could not load recommendations</strong>${escapeHtml(err.message)}</div>`;
   } finally {
     if (requestId === state.recommendationRequestId) profile.classList.remove("is-loading");
   }
@@ -418,7 +418,7 @@ function setFavoriteButtonsState(bookId, isFavorite, disabled = false) {
   document.querySelectorAll(`[data-fav-toggle="${bookId}"]`).forEach((button) => {
     button.dataset.favorite = isFavorite ? "true" : "false";
     button.classList.toggle("active", isFavorite);
-    button.textContent = isFavorite ? "已收藏" : "收藏";
+    button.textContent = isFavorite ? "Favorited" : "Favorite";
     button.disabled = disabled;
   });
 }
@@ -442,7 +442,7 @@ async function toggleFavorite(bookId, isFavorite) {
     scheduleRecommendationRefresh();
   } catch (err) {
     setFavoriteButtonsState(bookId, isFavorite, false);
-    openNotice(err.message, "收藏失败");
+    openNotice(err.message, "Favorite failed");
   }
 }
 
@@ -456,20 +456,20 @@ async function unfavoriteBook(bookId) {
     if (state.page === "profile") loadProfile();
   } catch (err) {
     setFavoriteButtonsState(bookId, true, false);
-    openNotice(err.message, "取消收藏失败");
+    openNotice(err.message, "Remove favorite failed");
   }
 }
 
 async function loadPickup() {
   resetRouteAnimation();
   if (!state.token) {
-    qs("#pickupSelection").innerHTML = `<div class="profile-card">请先登录，再创建本次取书任务。</div>`;
-    qs("#pickupCount").textContent = "0 本";
+    qs("#pickupSelection").innerHTML = `<div class="profile-card">Sign in before creating a pickup task.</div>`;
+    qs("#pickupCount").textContent = "0 books";
     return;
   }
   const map = await api("/api/library-map");
   state.map = map;
-  qs("#mapShelfCount").textContent = `${map.shelves.length} 个书架`;
+  qs("#mapShelfCount").textContent = `${map.shelves.length} shelves`;
   renderPickupSelection();
   renderSelectedSeat();
   renderRouteSteps();
@@ -483,14 +483,14 @@ function renderSelectedSeat() {
   const box = qs("#selectedSeatInfo");
   if (!box) return;
   if (!state.selectedSeat) {
-    box.textContent = "终点座位：无";
+    box.textContent = "Destination seat: none";
     return;
   }
   const [row, col] = state.selectedSeat;
-  box.textContent = `终点座位：阅读区 (${row}, ${col})`;
+  box.textContent = `Destination seat: reading area (${row}, ${col})`;
 }
 
-function resetPathMetrics(message = "等待生成路径") {
+function resetPathMetrics(message = "Waiting for route") {
   const box = qs("#pathMetrics");
   if (!box) return;
   box.classList.add("analysis-empty");
@@ -514,10 +514,10 @@ function constraintMetricsRows(result) {
   const allowed = stats.allowedCells ?? 0;
   const original = stats.originalCells ?? 0;
   return `
-      <div class="metric-row"><span>CSP 可搜索格</span><strong>${allowed} / ${original}</strong></div>
-      <div class="metric-row"><span>CSP 剪枝格</span><strong>${stats.prunedCells ?? 0}</strong></div>
-      <div class="metric-row"><span>CSP 回退段</span><strong>${stats.fallbackSegments ?? 0}</strong></div>
-      <div class="metric-row"><span>CSP 预处理</span><strong>${stats.cspRuntimeMs ?? 0} ms</strong></div>
+      <div class="metric-row"><span>CSP searchable cells</span><strong>${allowed} / ${original}</strong></div>
+      <div class="metric-row"><span>CSP pruned cells</span><strong>${stats.prunedCells ?? 0}</strong></div>
+      <div class="metric-row"><span>CSP fallback segments</span><strong>${stats.fallbackSegments ?? 0}</strong></div>
+      <div class="metric-row"><span>CSP preprocessing</span><strong>${stats.cspRuntimeMs ?? 0} ms</strong></div>
     `;
 }
 
@@ -531,7 +531,7 @@ function renderCspMetrics(result = state.latestRouteResult) {
     return;
   }
   box.classList.add("analysis-empty");
-  box.innerHTML = `<strong>${constraintsEnabled() ? "生成路径后显示 CSP 指标" : "开启 CSP 后生成路径"}</strong>`;
+  box.innerHTML = `<strong>${constraintsEnabled() ? "Generate a route to show CSP metrics" : "Enable CSP, then generate a route"}</strong>`;
 }
 
 function syncAlgorithmOptions(selectId) {
@@ -602,7 +602,7 @@ function selectedPickupIds() {
 function renderPickupSelection() {
   const box = qs("#pickupSelection");
   box.innerHTML = "";
-  qs("#pickupCount").textContent = `${state.pickupSelection.length} 本`;
+  qs("#pickupCount").textContent = `${state.pickupSelection.length} books`;
 
   state.pickupSelection.forEach((book, index) => {
     const item = document.createElement("article");
@@ -611,16 +611,16 @@ function renderPickupSelection() {
       <span class="selection-index">${index + 1}</span>
       <span class="selected-book-body">
         <strong>${escapeHtml(book.title)}</strong>
-        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "未分类")} · ${escapeHtml(book.shelf_id)} (${book.row}, ${book.col})</span>
+        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "Uncategorized")} · ${escapeHtml(book.shelf_id)} (${book.row}, ${book.col})</span>
       </span>
-      <button class="remove-selected-book" data-remove-pickup="${book.id}" aria-label="移除 ${escapeHtml(book.title)}" title="移除">×</button>
+      <button class="remove-selected-book" data-remove-pickup="${book.id}" aria-label="Remove ${escapeHtml(book.title)}" title="Remove">×</button>
     `;
     box.appendChild(item);
   });
 
   if (!state.pickupSelection.length) {
     box.innerHTML = `
-      <div class="pickup-empty-hint">点击右上角“+”添加想取的书</div>
+      <div class="pickup-empty-hint">Click the + button to add books</div>
     `;
   }
 }
@@ -636,7 +636,7 @@ function closeAddBookMenu() {
   qs("#addBookMenu").hidden = true;
 }
 
-function openNotice(message = "需要点击绿色格子来确定最终座位。", title = "提示") {
+function openNotice(message = "Click a green cell to choose the destination seat.", title = "Notice") {
   qs("#noticeTitle").textContent = title;
   qs("#noticeMessage").textContent = message;
   qs("#noticeModal").hidden = false;
@@ -653,10 +653,14 @@ function positionAddBookMenu() {
   if (!menu || !button || !panel) return;
   const buttonRect = button.getBoundingClientRect();
   const panelRect = panel.getBoundingClientRect();
-  const menuWidth = 180;
-  menu.style.left = `${buttonRect.right - panelRect.left - menuWidth}px`;
+  menu.style.width = "";
+  const menuWidth = menu.offsetWidth;
+  const panelPadding = 8;
+  const rightAlignedLeft = buttonRect.right - panelRect.left - menuWidth;
+  const maxLeft = Math.max(panelPadding, panelRect.width - menuWidth - panelPadding);
+  const left = Math.min(Math.max(panelPadding, rightAlignedLeft), maxLeft);
+  menu.style.left = `${left}px`;
   menu.style.top = `${buttonRect.bottom - panelRect.top + 6}px`;
-  menu.style.width = `${menuWidth}px`;
 }
 
 function resetPlannedRoute() {
@@ -692,10 +696,10 @@ function openPicker(mode, items = []) {
   state.pickerItems = items;
   state.pickerTempSelected = selectedPickupIds();
   qs("#bookPickerModal").hidden = false;
-  qs("#bookPickerTitle").textContent = mode === "favorites" ? "我的收藏" : "搜索想看的书";
+  qs("#bookPickerTitle").textContent = mode === "favorites" ? "My Favorites" : "Search Books";
   qs("#bookPickerSubtitle").textContent = mode === "favorites"
-    ? "从收藏中勾选本次要取的书。"
-    : "搜索结果可以直接加入本次取书，不需要先收藏。";
+    ? "Select favorite books for this pickup task."
+    : "Search results can be added directly; they do not need to be favorites first.";
   qs("#pickerSearchBar").style.display = mode === "search" ? "grid" : "none";
   qs("#pickerSearchInput").value = "";
   renderPickerList();
@@ -736,11 +740,11 @@ function renderPickerList() {
   const selected = state.pickerTempSelected;
   const selectedInCurrentList = state.pickerItems.filter((book) => selected.has(Number(book.id))).length;
   list.innerHTML = "";
-  qs("#pickerStatus").textContent = `${state.pickerItems.length} 本可选，已勾选 ${selectedInCurrentList} 本`;
+  qs("#pickerStatus").textContent = `${state.pickerItems.length} books available, ${selectedInCurrentList} selected`;
   qs("#pickerSelectAll").checked = state.pickerItems.length > 0 && state.pickerItems.every((book) => selected.has(Number(book.id)));
 
   if (!state.pickerItems.length) {
-    list.innerHTML = `<div class="profile-card">${state.pickerMode === "search" ? "输入关键词后搜索图书。" : "还没有收藏图书。"}</div>`;
+    list.innerHTML = `<div class="profile-card">${state.pickerMode === "search" ? "Enter a keyword to search books." : "No favorite books yet."}</div>`;
     return;
   }
 
@@ -753,9 +757,9 @@ function renderPickerList() {
       <input type="checkbox" value="${book.id}" ${checked ? "checked" : ""}>
       <span>
         <strong>${escapeHtml(book.title)}</strong>
-        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "未分类")} · 书架 ${escapeHtml(book.shelf_id)} / 坐标 (${book.row}, ${book.col})</span>
+        <br><span class="book-meta">${escapeHtml(book.author || "Unknown")} · ${escapeHtml(book.category || "Uncategorized")} · Shelf ${escapeHtml(book.shelf_id)} / Coordinates (${book.row}, ${book.col})</span>
       </span>
-      ${alreadySelected.has(Number(book.id)) ? `<em>已在篮中</em>` : ""}
+      ${alreadySelected.has(Number(book.id)) ? `<em>Already in list</em>` : ""}
     `;
     list.appendChild(item);
   });
@@ -824,6 +828,7 @@ function cellCenter(grid, point) {
 function routeVisualPoints(grid, path, segmentIndex) {
   const usage = sharedRouteEdgeUsage();
   const points = [];
+  // Offset shared route runs so repeated paths remain visually distinguishable.
   const runs = routeRuns(path).map((run) => {
     const startCenter = cellCenter(grid, path[run.start]);
     const endCenter = cellCenter(grid, path[run.end]);
@@ -926,6 +931,7 @@ function routeRunOffset(path, run, segmentIndex, usage) {
 
   const order = peers.indexOf(segmentIndex);
   const centered = order - (peers.length - 1) / 2;
+  // Center sibling routes around the grid line instead of pushing all of them one way.
   const amount = centered * 4;
   const direction = run.direction;
 
@@ -962,6 +968,7 @@ function interpolatedRoutePoint(points, progress, stepLimit) {
   if (!points.length) return null;
   if (points.length === 1 || stepLimit <= 0) return points[0];
 
+  // Route animation advances by path steps, but SVG drawing needs distance along the polyline.
   const ratio = Math.max(0, Math.min(1, progress / stepLimit));
   const lengths = [];
   let totalLength = 0;
@@ -1074,6 +1081,7 @@ function renderRouteSegment(svg, grid, segment, index, muted) {
 
   const totalLength = Math.max(1, line.getTotalLength ? line.getTotalLength() : path.length);
   const progressLength = totalLength * Math.min(1, progress / Math.max(1, path.length - 1));
+  // Stroke dashing lets the same renderer show both full routes and playback progress.
   line.style.strokeDasharray = `${totalLength}`;
   line.style.strokeDashoffset = `${Math.max(0, totalLength - progressLength)}`;
 
@@ -1140,8 +1148,8 @@ function updateRouteProgress() {
   playButton.disabled = !hasPath;
   playButton.classList.toggle("playing", isPlaying);
   playButton.textContent = isPlaying ? "Ⅱ" : "▶";
-  playButton.title = isPlaying ? "暂停" : "播放";
-  playButton.setAttribute("aria-label", isPlaying ? "暂停路线播放" : "播放路线");
+  playButton.title = isPlaying ? "Pause" : "Play";
+  playButton.setAttribute("aria-label", isPlaying ? "Pause route playback" : "Play route");
 }
 
 function pauseRouteAnimation() {
@@ -1208,12 +1216,12 @@ function toggleRouteAnimation() {
 function renderRouteSteps() {
   const box = qs("#routeSteps");
   box.innerHTML = "";
-  qs("#routeStepCount").textContent = `${state.segments.length} 步`;
+  qs("#routeStepCount").textContent = `${state.segments.length} steps`;
   updateRouteStepNavigation();
   if (!state.segments.length) {
     box.innerHTML = `
       <div class="route-empty">
-        生成路径后会显示取书步骤
+        Pickup steps will appear after a route is generated
       </div>
     `;
     return;
@@ -1224,20 +1232,20 @@ function renderRouteSteps() {
     item.className = `route-step ${state.activeSegment === index ? "active" : ""}`;
     item.dataset.segment = index;
     item.id = `routeStep${index}`;
-    const directions = segment.instructions?.length ? segment.instructions.join("，") : "无需移动";
+    const directions = segment.instructions?.length ? segment.instructions.join(", ") : "No movement needed";
     const title = segment.type === "seat"
-      ? "前往阅读区"
-      : `前往 ${escapeHtml(segment.shelfId)}`;
+      ? "Go to reading area"
+      : `Go to ${escapeHtml(segment.shelfId)}`;
     const bookLine = segment.type === "book"
-      ? `<strong>${escapeHtml(segment.bookTitle)}</strong><br><span>${escapeHtml(segment.pickupSide)}取书</span>`
-      : `<strong>到达阅读区座位</strong><br><span>完成本次取书</span>`;
+      ? `<strong>${escapeHtml(segment.bookTitle)}</strong><br><span>Pick up from the ${escapeHtml(segment.pickupSide)}</span>`
+      : `<strong>Arrive at reading-area seat</strong><br><span>Finish this pickup task</span>`;
     item.innerHTML = `
       <span class="route-step-index">${index + 1}</span>
       <div class="route-step-body">
         <span class="route-step-title">${title}</span>
         ${bookLine}
-        <span>距离：${segment.distance} 步</span>
-        <span>方向：${escapeHtml(directions)}</span>
+        <span>Distance: ${segment.distance} steps</span>
+        <span>Directions: ${escapeHtml(directions)}</span>
       </div>
     `;
     box.appendChild(item);
@@ -1279,31 +1287,32 @@ async function planPath(options = {}) {
   state.autoPlanTimer = null;
   const ids = state.pickupSelection.map((book) => Number(book.id));
   if (!ids.length) {
-    openNotice("需要至少选择一本想取的书。", "需要选择图书");
+    openNotice("Select at least one book to pick up.", "Books Required");
     resetPathMetrics();
     return;
   }
   if (!state.selectedSeat) {
-    openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
+    openNotice("Click a green cell to choose the destination seat.", "Destination Seat Required");
     return;
   }
   const algorithm = qs("#algorithmSelect").value;
   const method = qs("#solverSelect")?.value || "";
   const useConstraints = constraintsEnabled();
   if (!algorithm || !method) {
-    openNotice("需要先选择两点路径算法和整体取书算法。", "需要选择算法");
+    openNotice("Select both a two-point path algorithm and a visit order algorithm.", "Algorithms Required");
     resetPathMetrics();
     return;
   }
   const requestId = ++state.planRequestId;
   pauseRouteAnimation();
-  resetPathMetrics("路径生成中...");
+  resetPathMetrics("Generating route...");
   let result;
   try {
     result = await api("/api/pickup/solve", {
       method: "POST",
       body: JSON.stringify({ bookIds: ids, algorithm, method, end: state.selectedSeat, constraintsEnabled: useConstraints }),
     });
+    // Ignore late responses after the user changes algorithms, CSP mode, books, or seat.
     if (requestId !== state.planRequestId) return;
   } catch (err) {
     if (requestId !== state.planRequestId) return;
@@ -1341,13 +1350,13 @@ async function planPath(options = {}) {
   qs("#pathMetrics").classList.remove("analysis-empty");
   qs("#pathMetrics").innerHTML = `
     <section class="analysis-group">
-      <div class="metric-row"><span>总代价</span><strong>${result.distance}</strong></div>
-      <div class="metric-row"><span>两点算法</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
-      <div class="metric-row"><span>整体算法</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
-      <div class="metric-row"><span>约束模式</span><strong>${result.constraintsEnabled ? "CSP 开启" : "普通"}</strong></div>
-      ${result.pathExpanded != null ? `<div class="metric-row"><span>底层路径扩展</span><strong>${result.pathExpanded}</strong></div>` : ""}
-      ${result.solverExpanded != null ? `<div class="metric-row"><span>整体规划扩展</span><strong>${result.solverExpanded}</strong></div>` : ""}
-      <div class="metric-row"><span>路径计算时间</span><strong>${result.runtimeMs} ms</strong></div>
+      <div class="metric-row"><span>Total cost</span><strong>${result.distance}</strong></div>
+      <div class="metric-row"><span>Path algorithm</span><strong>${escapeHtml(pathAlgorithm)}</strong></div>
+      <div class="metric-row"><span>Visit order algorithm</span><strong>${escapeHtml(orderAlgorithm)}</strong></div>
+      <div class="metric-row"><span>Constraint mode</span><strong>${result.constraintsEnabled ? "CSP enabled" : "Standard"}</strong></div>
+      ${result.pathExpanded != null ? `<div class="metric-row"><span>Path nodes expanded</span><strong>${result.pathExpanded}</strong></div>` : ""}
+      ${result.solverExpanded != null ? `<div class="metric-row"><span>Planner nodes expanded</span><strong>${result.solverExpanded}</strong></div>` : ""}
+      <div class="metric-row"><span>Route runtime</span><strong>${result.runtimeMs} ms</strong></div>
     </section>
   `;
   renderCspMetrics(result);
@@ -1378,26 +1387,26 @@ function openCompareModal() {
   const task = compareTaskPayload();
   if (!task) return;
   setCompareModeButtons("");
-  qs("#compareTitle").textContent = "多算法比较";
-  qs("#compareSubtitle").textContent = "选择固定一类算法后，比较另一类算法的表现。";
+  qs("#compareTitle").textContent = "Algorithm Comparison";
+  qs("#compareSubtitle").textContent = "Fix one algorithm type, then compare the other.";
   qs("#compareSummary").innerHTML = `
-    <span>本次取书<strong>${task.ids.length} 本</strong></span>
-    <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
-    <span>当前组合<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
-    <span>约束模式<strong>${task.constraintsEnabled ? "CSP" : "普通"}</strong></span>
+    <span>This pickup<strong>${task.ids.length} books</strong></span>
+    <span>Destination seat<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>Current combination<strong>${escapeHtml(selectedOptionText("#algorithmSelect", "-"))} + ${escapeHtml(selectedOptionText("#solverSelect", "-"))}</strong></span>
+    <span>Constraint mode<strong>${task.constraintsEnabled ? "CSP" : "Standard"}</strong></span>
   `;
-  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">请选择一种比较方式。</div>`;
+  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">Choose a comparison mode.</div>`;
   qs("#algorithmCompareModal").hidden = false;
 }
 
 function compareTaskPayload() {
   const ids = state.pickupSelection.map((book) => Number(book.id));
   if (!ids.length) {
-    openNotice("请至少选择一本想取的书。", "需要选择图书");
+    openNotice("Select at least one book to pick up.", "Books Required");
     return null;
   }
   if (!state.selectedSeat) {
-    openNotice("需要点击绿色格子来确定最终座位。", "需要选择终点座位");
+    openNotice("Click a green cell to choose the destination seat.", "Destination Seat Required");
     return null;
   }
   return { ids, end: state.selectedSeat, constraintsEnabled: constraintsEnabled() };
@@ -1411,29 +1420,29 @@ async function openAlgorithmCompare(type) {
   const currentPathAlgorithm = qs("#algorithmSelect").value;
   const currentOrderAlgorithm = qs("#solverSelect").value;
   if (!currentPathAlgorithm || !currentOrderAlgorithm) {
-    qs("#compareTableWrap").innerHTML = `<div class="compare-error">请先选择两点路径算法和整体取书算法。</div>`;
+    qs("#compareTableWrap").innerHTML = `<div class="compare-error">Select both a two-point path algorithm and a visit order algorithm first.</div>`;
     return;
   }
   setCompareModeButtons(type);
   const comparePath = type === "path";
   const compareConstraints = type === "constraints";
-  const title = compareConstraints ? "CSP 模式比较" : comparePath ? "两点路径算法比较" : "整体取书算法比较";
+  const title = compareConstraints ? "CSP Mode Comparison" : comparePath ? "Two-Point Path Algorithm Comparison" : "Visit Order Algorithm Comparison";
   const fixedLabel = compareConstraints
-    ? `固定算法组合：${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)} + ${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
+    ? `Fixed algorithm combination: ${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)} + ${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
     : comparePath
-    ? `固定整体算法：${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
-    : `固定两点算法：${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)}`;
-  const candidates = compareConstraints ? [[false, "普通模式"], [true, "CSP 开启"]] : comparePath ? PATH_ALGORITHMS : ORDER_ALGORITHMS;
+    ? `Fixed visit order algorithm: ${compareLabel(ORDER_ALGORITHMS, currentOrderAlgorithm)}`
+    : `Fixed path algorithm: ${compareLabel(PATH_ALGORITHMS, currentPathAlgorithm)}`;
+  const candidates = compareConstraints ? [[false, "Standard mode"], [true, "CSP enabled"]] : comparePath ? PATH_ALGORITHMS : ORDER_ALGORITHMS;
 
   qs("#compareTitle").textContent = title;
-  qs("#compareSubtitle").textContent = "比较结果只用于分析，不会改变当前地图路线。";
+  qs("#compareSubtitle").textContent = "Comparison results are for analysis only and will not change the current map route.";
   qs("#compareSummary").innerHTML = `
-    <span>本次取书<strong>${task.ids.length} 本</strong></span>
-    <span>终点座位<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
-    <span>${escapeHtml(fixedLabel.split("：")[0])}<strong>${escapeHtml(fixedLabel.split("：")[1] || "-")}</strong></span>
-    <span>约束模式<strong>${task.constraintsEnabled ? "CSP" : "普通"}</strong></span>
+    <span>This pickup<strong>${task.ids.length} books</strong></span>
+    <span>Destination seat<strong>(${task.end[0]}, ${task.end[1]})</strong></span>
+    <span>${escapeHtml(fixedLabel.split(":")[0])}<strong>${escapeHtml(fixedLabel.split(":").slice(1).join(":").trim() || "-")}</strong></span>
+    <span>Constraint mode<strong>${task.constraintsEnabled ? "CSP" : "Standard"}</strong></span>
   `;
-  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">比较中...</div>`;
+  qs("#compareTableWrap").innerHTML = `<div class="compare-loading">Comparing...</div>`;
   qs("#algorithmCompareModal").hidden = false;
 
   const rows = [];
@@ -1460,9 +1469,10 @@ async function openAlgorithmCompare(type) {
         error: err.message,
       });
     }
+    // Stop rendering stale comparison results if the modal was closed or restarted.
     if (requestId !== state.compareRequestId) return;
   }
-  renderCompareRows(rows, compareConstraints ? "CSP 模式" : "算法", compareConstraints);
+  renderCompareRows(rows, compareConstraints ? "CSP mode" : "Algorithm", compareConstraints);
 }
 
 function compareMetricValue(row, key) {
@@ -1470,7 +1480,7 @@ function compareMetricValue(row, key) {
   return row.result?.[key];
 }
 
-function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false) {
+function renderCompareRows(rows, labelHeader = "Algorithm", includeCspStats = false) {
   const successful = rows.filter((row) => row.result && row.result.distance != null);
   const metricKeys = includeCspStats
     ? ["distance", "pathExpanded", "solverExpanded", "runtimeMs", "cspRuntimeMs"]
@@ -1499,11 +1509,11 @@ function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false
       <thead>
         <tr>
           <th>${escapeHtml(labelHeader)}</th>
-          <th>总代价</th>
-          <th>底层路径扩展</th>
-          <th>整体规划扩展</th>
-          <th>路径计算时间</th>
-          ${includeCspStats ? `<th>CSP 预处理</th>` : ""}
+          <th>Total cost</th>
+          <th>Path nodes expanded</th>
+          <th>Planner nodes expanded</th>
+          <th>Route runtime</th>
+          ${includeCspStats ? `<th>CSP preprocessing</th>` : ""}
         </tr>
       </thead>
       <tbody>
@@ -1511,7 +1521,7 @@ function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false
           if (row.error) {
             return `
               <tr class="${row.current ? "current" : ""}">
-                <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}</td>
+                <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">Current</span>` : ""}</td>
                 <td colspan="${includeCspStats ? 5 : 4}">${escapeHtml(row.error)}</td>
               </tr>
             `;
@@ -1519,7 +1529,7 @@ function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false
           const result = row.result;
           return `
             <tr class="${row.current ? "current" : ""}">
-              <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">当前</span>` : ""}</td>
+              <td>${escapeHtml(row.label)}${row.current ? `<span class="best-badge">Current</span>` : ""}</td>
               ${metricCell("distance", result.distance)}
               ${metricCell("pathExpanded", result.pathExpanded)}
               ${metricCell("solverExpanded", result.solverExpanded)}
@@ -1535,7 +1545,7 @@ function renderCompareRows(rows, labelHeader = "算法", includeCspStats = false
 
 async function loadProfile() {
   if (!state.token) {
-    qs("#profileInfo").innerHTML = "请先登录。";
+    qs("#profileInfo").innerHTML = "Please sign in first.";
     qs("#historyList").innerHTML = "";
     qs("#profileFavorites").innerHTML = "";
     qs("#passwordMessage").textContent = "";
@@ -1548,7 +1558,7 @@ async function loadProfile() {
   ]);
   qs("#profileInfo").innerHTML = `
     <strong>${escapeHtml(me.username)}</strong><br>
-    <span class="book-meta">注册时间：${escapeHtml(me.created_at)}<br>最近登录：${escapeHtml(me.last_login_at || "-")}</span>
+    <span class="book-meta">Registered: ${escapeHtml(me.created_at)}<br>Last sign-in: ${escapeHtml(me.last_login_at || "-")}</span>
   `;
   qs("#historyList").innerHTML = "";
   history.forEach((item) => {
@@ -1568,11 +1578,11 @@ async function changePassword() {
   const message = qs("#passwordMessage");
 
   if (!currentPassword || !newPassword || !confirmPassword) {
-    message.textContent = "请填写完整密码信息。";
+    message.textContent = "Fill in all password fields.";
     return;
   }
   if (newPassword !== confirmPassword) {
-    message.textContent = "两次输入的新密码不一致。";
+    message.textContent = "The new passwords do not match.";
     return;
   }
   try {
@@ -1583,7 +1593,7 @@ async function changePassword() {
     qs("#currentPassword").value = "";
     qs("#newPassword").value = "";
     qs("#confirmPassword").value = "";
-    message.textContent = "密码已更新。下次登录请使用新密码。";
+    message.textContent = "Password updated. Use the new password next time you sign in.";
   } catch (err) {
     message.textContent = err.message;
   }
@@ -1596,26 +1606,26 @@ async function submitAuth() {
   const submitButton = qs("#authSubmit");
   try {
     submitButton.disabled = true;
-    submitButton.textContent = isRegister ? "注册中..." : "登录中...";
+    submitButton.textContent = isRegister ? "Signing up..." : "Signing in...";
     if (isRegister) {
       const confirm = qs("#authConfirmPassword") ? qs("#authConfirmPassword").value : "";
       if (!username || !password || !confirm) {
-        qs("#authMessage").textContent = "请完整填写用户名和密码。";
+        qs("#authMessage").textContent = "Fill in username and password.";
         return;
       }
       if (password !== confirm) {
-        qs("#authMessage").textContent = "两次输入的密码不一致。";
+        qs("#authMessage").textContent = "The passwords do not match.";
         return;
       }
       if (password.length < 6) {
-        qs("#authMessage").textContent = "密码至少需要 6 位。";
+        qs("#authMessage").textContent = "Password must be at least 6 characters.";
         return;
       }
       await api("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({ username, password, confirmPassword: confirm }),
       });
-      qs("#authMessage").textContent = "注册成功，现在可以登录。";
+      qs("#authMessage").textContent = "Sign up complete. You can sign in now.";
       qs("#loginTab").click();
       return;
     }
@@ -1632,7 +1642,7 @@ async function submitAuth() {
     qs("#authMessage").textContent = err.message;
   } finally {
     submitButton.disabled = false;
-    submitButton.textContent = qs("#registerTab").classList.contains("active") ? "注册" : "登录";
+    submitButton.textContent = qs("#registerTab").classList.contains("active") ? "Sign Up" : "Sign In";
   }
 }
 
@@ -1782,7 +1792,7 @@ function toggleBookDetails(button) {
   const expanded = button.getAttribute("aria-expanded") === "true";
   panel.hidden = expanded;
   button.setAttribute("aria-expanded", expanded ? "false" : "true");
-  button.textContent = expanded ? "详情 ▾" : "收起 ▴";
+  button.textContent = expanded ? "Details ▾" : "Collapse ▴";
 }
 
 function togglePasswordVisibility(button) {
@@ -1790,16 +1800,16 @@ function togglePasswordVisibility(button) {
   const showing = input.type === "text";
   input.type = showing ? "password" : "text";
   button.textContent = showing ? "👁" : "🙈";
-  button.setAttribute("aria-label", showing ? "显示密码" : "隐藏密码");
-  button.title = showing ? "显示密码" : "隐藏密码";
+  button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+  button.title = showing ? "Show password" : "Hide password";
 }
 
 function switchAuth(register) {
   qs("#loginTab").classList.toggle("active", !register);
   qs("#registerTab").classList.toggle("active", register);
-  qs("#authSubmit").textContent = register ? "注册" : "登录";
-  qs("#authMessage").textContent = register ? "创建一个新账号。" : "演示账号：demo / demo123";
-  // 显示或隐藏注册专用的确认密码输入
+  qs("#authSubmit").textContent = register ? "Sign Up" : "Sign In";
+  qs("#authMessage").textContent = register ? "Create a new account." : "Demo account: demo / demo123";
+  // Show or hide the confirm-password field used for registration.
   const confirmLabel = qs("#authConfirmLabel");
   const confirmWrap = qs("#authConfirmWrap");
   if (confirmLabel && confirmWrap) {
