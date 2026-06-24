@@ -1,6 +1,8 @@
 #!/bin/bash
+# Creates an isolated environment and optionally trains the offline recommender.
 set -e
 
+# Resolve every relative path from the project directory, even when double-clicked.
 cd "$(dirname "$0")"
 
 echo "Setting up Library Borrowing System..."
@@ -13,6 +15,7 @@ if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; 
 fi
 
 if [ ! -d ".venv" ]; then
+  # Prefer python3 on Unix-like systems while keeping a python fallback.
   echo "Creating local virtual environment at .venv..."
   if command -v python3 >/dev/null 2>&1; then
     python3 -m venv .venv
@@ -33,6 +36,7 @@ echo "The recommender model improves personalized recommendations."
 echo "You can skip this and still use the app; recommendations will use popular high-rated books."
 echo "If you want the full ML recommendations later, rerun setup later and choose yes."
 read -r -p "Train recommender model now? This may take a while. [y/N] " TRAIN_MODEL
+# Model training is optional because the application has a popularity fallback.
 case "$TRAIN_MODEL" in
   [yY]|[yY][eE][sS])
     echo "Training recommender model..."

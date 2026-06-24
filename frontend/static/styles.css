@@ -1,3 +1,7 @@
+/* --------------------------------------------------------------------------
+   Design tokens and global interaction defaults
+   -------------------------------------------------------------------------- */
+
 :root {
   --bg: #eef3f1;
   --panel: #ffffff;
@@ -118,6 +122,10 @@ label {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* --------------------------------------------------------------------------
+   Application shell, sidebar navigation, and top-level page switching
+   -------------------------------------------------------------------------- */
 
 .visually-hidden {
   position: absolute !important;
@@ -295,6 +303,10 @@ h2 {
 .page.active {
   display: block;
 }
+
+/* --------------------------------------------------------------------------
+   Shared panels, forms, book cards, search filters, and recommendation views
+   -------------------------------------------------------------------------- */
 
 .auth-panel {
   max-width: 420px;
@@ -474,6 +486,10 @@ section {
   overflow-y: auto;
   padding-right: 4px;
 }
+
+/* --------------------------------------------------------------------------
+   Pickup workbench controls, map grid, route overlays, and algorithm metrics
+   -------------------------------------------------------------------------- */
 
 .book-card,
 .selector-item,
@@ -1809,6 +1825,10 @@ section {
   font-size: 13px;
 }
 
+/* --------------------------------------------------------------------------
+   Dialogs and enlarged map/comparison presentation
+   -------------------------------------------------------------------------- */
+
 .legend span {
   display: inline-flex;
   align-items: center;
@@ -2191,6 +2211,7 @@ section {
 }
 
 @media (max-width: 980px) {
+  /* Collapse the desktop shell and expose mobile workbench tabs. */
   .app-shell {
     grid-template-columns: 1fr;
   }
@@ -2405,6 +2426,7 @@ section {
 }
 
 @media (max-height: 760px) {
+  /* Preserve access to controls on short laptop displays. */
   .pickup-workbench {
     --pickup-map-size: calc(100vh - 158px);
   }

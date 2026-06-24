@@ -1,3 +1,14 @@
+"""Offline training pipeline for the library's hybrid recommendation system.
+
+The training process builds two complementary models from the submitted CSV data:
+
+* Truncated SVD learns collaborative item embeddings from user-book interactions.
+* TF-IDF represents book metadata and descriptions for content-based cold start.
+
+The resulting objects are stored together in one joblib artifact so the lightweight
+HTTP server can perform inference without retraining during normal application use.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +27,7 @@ DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "backend" / "data" / "models" / "recommende
 
 
 def book_document(row: dict[str, str]) -> str:
+    """Combine useful metadata fields into one document for TF-IDF training."""
     fields = (
         "title",
         "original_title",
@@ -29,6 +41,11 @@ def book_document(row: dict[str, str]) -> str:
 
 
 def interaction_strength(row: dict[str, str]) -> float:
+    """Convert explicit and implicit user activity into one positive weight.
+
+    A five-star rating is the strongest signal. Read and review flags add useful
+    implicit feedback when a user did not provide a numerical rating.
+    """
     rating = int_or_zero(row.get("rating"))
     is_read = int_or_zero(row.get("is_read"))
     is_reviewed = int_or_zero(row.get("is_reviewed"))
@@ -39,6 +56,7 @@ def interaction_strength(row: dict[str, str]) -> float:
 
 
 def int_or_zero(value: str | None) -> int:
+    """Parse a possibly empty CSV value as an integer, defaulting safely to zero."""
     try:
         return int(float(value or 0))
     except ValueError:
@@ -46,6 +64,7 @@ def int_or_zero(value: str | None) -> int:
 
 
 def load_books(path: Path) -> tuple[list[str], list[str], dict[str, dict[str, Any]]]:
+    """Load model book IDs, TF-IDF documents, and display metadata from CSV."""
     book_ids: list[str] = []
     documents: list[str] = []
     metadata: dict[str, dict[str, Any]] = {}
@@ -65,6 +84,7 @@ def load_books(path: Path) -> tuple[list[str], list[str], dict[str, dict[str, An
 
 
 def float_or_zero(value: str | None) -> float:
+    """Parse a possibly empty CSV value as a float, defaulting safely to zero."""
     try:
         return float(value or 0)
     except ValueError:
@@ -78,6 +98,14 @@ def train_recommender(
     n_components: int = 48,
     max_features: int = 12000,
 ) -> dict[str, Any]:
+    """Train and persist the collaborative and content recommendation models.
+
+    The item-user matrix is intentionally sparse because most readers interact
+    with only a small fraction of the 10,000 books. Truncated SVD converts this
+    sparse matrix into dense normalized item embeddings. In parallel, TF-IDF
+    creates a content representation that remains useful for new users who have
+    search history but no favorites.
+    """
     import joblib
     import numpy as np
     from scipy.sparse import csr_matrix
@@ -116,6 +144,8 @@ def train_recommender(
     if not strengths:
         raise ValueError(f"No positive interactions found in {interactions_csv}")
 
+    # Rows represent books and columns represent anonymized users. Keeping this
+    # matrix sparse avoids allocating a large dense book-by-user array.
     item_user = csr_matrix(
         (strengths, (row_indices, col_indices)),
         shape=(len(book_ids), len(user_id_to_index)),
@@ -126,9 +156,13 @@ def train_recommender(
     svd = TruncatedSVD(n_components=max_components, algorithm="arpack", random_state=42)
     item_factors = normalize(svd.fit_transform(item_user))
 
+    # Content features provide a separate recommendation path for cold-start
+    # users whose behavior cannot yet form a collaborative profile.
     vectorizer = TfidfVectorizer(max_features=max_features, token_pattern=r"(?u)\b\w\w+\b")
     content_matrix = normalize(vectorizer.fit_transform(documents))
 
+    # Store training metadata with the model so the UI can explain which model
+    # is loaded and how much data was used without opening the source CSV files.
     model = {
         "version": 1,
         "book_ids": book_ids,
@@ -163,6 +197,11 @@ def train_recommender(
 
 
 def positive_pair_similarity(item_factors: Any, book_id_to_index: dict[str, int], positives_by_user: dict[str, list[str]]) -> float:
+    """Return a lightweight sanity metric for books liked by the same users.
+
+    This is not a full offline evaluation metric. It provides a quick check that
+    the learned item factors place at least some co-interacted books nearby.
+    """
     import numpy as np
 
     values: list[float] = []
@@ -180,6 +219,7 @@ def positive_pair_similarity(item_factors: Any, book_id_to_index: dict[str, int]
 
 
 def main() -> None:
+    """Parse command-line options, train the model, and print a concise summary."""
     parser = argparse.ArgumentParser(description="Train the library recommender model.")
     parser.add_argument("--books-csv", type=Path, default=DEFAULT_BOOKS_CSV)
     parser.add_argument("--interactions-csv", type=Path, default=DEFAULT_INTERACTIONS_CSV)

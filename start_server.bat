@@ -1,4 +1,5 @@
 @echo off
+rem Starts the application with the environment created by setup.bat.
 cd /d "%~dp0"
 
 echo Starting Library Borrowing System...

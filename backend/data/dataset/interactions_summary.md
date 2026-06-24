@@ -1,5 +1,8 @@
 # Interactions Summary
 
+- Source: UCSD Goodreads Book Graph interaction data
+- Source URL: https://cseweb.ucsd.edu/~jmcauley/datasets/goodreads.html
+- Permitted use: academic use only; do not redistribute or use commercially
 - Selected Goodreads book IDs: 10000
 - Matched internal interaction book IDs: 9996
 - Raw interaction rows scanned: 6107259

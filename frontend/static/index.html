@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <!-- Persistent application shell and accessible keyboard skip target. -->
     <a class="skip-link" href="#mainContent">Skip to main content</a>
     <div class="app-shell">
       <aside class="sidebar">
@@ -42,6 +43,7 @@
           <div class="user-chip" id="userChip">Not signed in</div>
         </header>
 
+        <!-- Authentication page: shared form switches between sign-in and registration. -->
         <section class="page" id="loginPage">
           <div class="auth-panel">
             <div class="tabs">
@@ -65,6 +67,7 @@
           </div>
         </section>
 
+        <!-- Catalogue page: search/filter controls followed by results and recommendations. -->
         <section class="page active" id="searchPage">
           <div class="search-row">
             <input id="searchInput" placeholder="Search by title, author, tag, or description" />
@@ -120,6 +123,7 @@
           </div>
         </section>
 
+        <!-- Pickup workbench: task controls, interactive map, metrics, and route steps. -->
         <section class="page" id="pickupPage">
           <div class="pickup-workbench" data-mobile-view="map">
             <section class="pickup-panel workbench-sidebar" data-workbench-panel="tasks">
@@ -329,6 +333,7 @@
           </div>
         </section>
 
+        <!-- Profile page: account details, password maintenance, history, and favorites. -->
         <section class="page" id="profilePage">
           <div class="profile-grid">
             <section>
@@ -373,6 +378,7 @@
         </section>
       </main>
     </div>
+    <!-- Enlarged route map uses the same cells and SVG overlays as the workbench map. -->
     <div class="map-modal" id="mapModal" hidden>
       <section class="map-modal-panel" role="dialog" aria-modal="true" aria-labelledby="mapModalTitle">
         <div class="modal-head">
@@ -400,6 +406,7 @@
         <div id="libraryGridLarge" class="library-grid library-grid-large"></div>
       </section>
     </div>
+    <!-- Reusable notice dialog for incomplete route-planning input. -->
     <div class="notice-modal" id="noticeModal" hidden>
       <section class="notice-panel" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
         <h2 id="noticeTitle">Destination Seat Required</h2>
@@ -407,6 +414,7 @@
         <button class="primary" id="closeNoticeModal">OK</button>
       </section>
     </div>
+    <!-- Staged book picker: changes are applied only after user confirmation. -->
     <div class="modal-backdrop" id="bookPickerModal" hidden>
       <section class="book-picker" role="dialog" aria-modal="true" aria-labelledby="bookPickerTitle">
         <div class="modal-head">
@@ -431,6 +439,7 @@
         </div>
       </section>
     </div>
+    <!-- Fair comparison dialog reuses the active books, destination, and fixed settings. -->
     <div class="modal-backdrop" id="algorithmCompareModal" hidden>
       <section class="compare-panel" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
         <div class="modal-head">

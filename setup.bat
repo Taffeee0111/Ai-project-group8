@@ -1,10 +1,12 @@
 @echo off
+rem Creates an isolated environment and optionally trains the offline recommender.
 cd /d "%~dp0"
 
 echo Setting up Library Borrowing System...
 echo.
 
 where python >nul 2>nul
+rem Prefer python when available; py -3 supports common Windows installations.
 if errorlevel 1 (
   py -3 --version >nul 2>nul
   if errorlevel 1 (
@@ -46,6 +48,7 @@ echo The recommender model improves personalized recommendations.
 echo You can skip this and still use the app; recommendations will use popular high-rated books.
 echo If you want the full ML recommendations later, rerun setup later and choose yes.
 choice /c YN /n /m "Train recommender model now? This may take a while. [y/N] "
+rem Training is optional because the application has a popularity fallback.
 if errorlevel 2 goto skip_model
 if errorlevel 1 (
   echo Training recommender model...

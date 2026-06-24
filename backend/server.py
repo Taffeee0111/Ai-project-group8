@@ -1,3 +1,17 @@
+"""Backend for the intelligent library borrowing demonstration.
+
+This single-file standard-library server intentionally keeps deployment simple for
+coursework submission. It contains four main responsibilities:
+
+* initialize and query the SQLite catalogue;
+* expose authentication, search, recommendation, and route-planning HTTP APIs;
+* compare BFS, UCS, and A* path-search behavior on a weighted library grid; and
+* plan multi-book pickup order with greedy nearest-neighbor and 2-opt.
+
+Generated data such as the SQLite database and recommendation model are excluded
+from submission and recreated from the documented CSV files when required.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -25,6 +39,9 @@ DATASET_DIR = DATA_DIR / "dataset"
 DATASET_BOOKS_CSV = DATASET_DIR / "books_10k.csv"
 RECOMMENDER_MODEL_PATH = DATA_DIR / "models" / "recommender.joblib"
 
+# Process-local caches keep repeated demo interactions responsive. The database
+# remains the source of truth; cache signatures include the inputs that invalidate
+# each result.
 TOKENS: dict[str, int] = {}
 BOOK_VECTOR_CACHE: dict[str, Any] = {}
 POPULARITY_CACHE: dict[str, dict[str, float]] | None = None
@@ -40,6 +57,8 @@ CELL_ENTRANCE = 2
 CELL_CROWDED = 4
 CELL_READING = 5
 
+# The physical map is generated from shelf groups rather than stored as hundreds
+# of hard-coded individual cells. This makes map geometry reproducible.
 SHELF_GROUPS = [
     (range(2, 8), [2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27]),
     (range(10, 20), [2, 3, 6, 7, 22, 23, 26, 27]),
@@ -89,30 +108,52 @@ BOOK_DATASET_COLUMNS = {
 }
 
 
+class ClosingConnection(sqlite3.Connection):
+    """SQLite connection that closes after a transactional ``with`` block.
+
+    Python's default sqlite3 context manager commits or rolls back but does not
+    close the connection. Closing here prevents ResourceWarning messages and
+    releases file handles promptly during repeated API requests.
+    """
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool:
+        """Commit or roll back the transaction, then always close the connection."""
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    """Open the current application database and return rows with named columns."""
+    conn = sqlite3.connect(DB_PATH, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def now() -> str:
+    """Return a database-friendly local timestamp."""
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def hash_password(password: str) -> str:
+    """Hash a demonstration account password before SQLite storage."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def auth_signature(user_id: int) -> str:
+    """Create an HMAC signature used to detect modified demonstration tokens."""
     payload = str(user_id).encode("utf-8")
     return hmac.new(AUTH_SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
 def create_auth_token(user_id: int) -> str:
+    """Create a signed bearer token for a successfully authenticated user."""
     return f"user-{user_id}.{auth_signature(user_id)}"
 
 
 def parse_auth_token(token: str) -> int | None:
+    """Validate a bearer token and return its user ID when authentic."""
     if token in TOKENS:
         return TOKENS[token]
     if not token.startswith("user-") or "." not in token:
@@ -128,6 +169,7 @@ def parse_auth_token(token: str) -> int | None:
 
 
 def int_or_none(value: Any) -> int | None:
+    """Parse optional integer input from CSV, query strings, or JSON."""
     text = str(value or "").strip()
     if not text:
         return None
@@ -138,6 +180,7 @@ def int_or_none(value: Any) -> int | None:
 
 
 def float_or_none(value: Any) -> float | None:
+    """Parse optional floating-point input from CSV, query strings, or JSON."""
     text = str(value or "").strip()
     if not text:
         return None
@@ -148,6 +191,7 @@ def float_or_none(value: Any) -> float | None:
 
 
 def first_genre(genres: str) -> str:
+    """Choose the first available genre as a compact display category."""
     for genre in (genres or "").split(";"):
         genre = genre.strip()
         if genre:
@@ -156,6 +200,7 @@ def first_genre(genres: str) -> str:
 
 
 def dataset_book_record(row: dict[str, str], index: int, shelf_ids: list[str]) -> dict[str, Any]:
+    """Convert one source CSV row into the complete SQLite import record."""
     description = row.get("description") or ""
     publisher = row.get("publisher") or ""
     year = row.get("publication_year") or row.get("original_publication_year") or ""
@@ -193,6 +238,7 @@ def dataset_book_record(row: dict[str, str], index: int, shelf_ids: list[str]) -
 
 
 def dataset_metadata_record(row: dict[str, str]) -> dict[str, Any]:
+    """Normalize optional Goodreads metadata into SQLite-compatible values."""
     return {
         "work_id": row.get("work_id") or None,
         "original_title": row.get("original_title") or None,
@@ -226,6 +272,7 @@ def dataset_metadata_record(row: dict[str, str]) -> dict[str, Any]:
 
 
 def ensure_dataset_book_columns(conn: sqlite3.Connection) -> None:
+    """Apply idempotent metadata-column migrations to an existing database."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
     for name, column_type in BOOK_DATASET_COLUMNS.items():
         if name not in existing:
@@ -233,6 +280,7 @@ def ensure_dataset_book_columns(conn: sqlite3.Connection) -> None:
 
 
 def dataset_books_from_csv(shelf_ids: list[str]) -> list[dict[str, Any]]:
+    """Read all submitted book records and assign each to a generated shelf."""
     if not DATASET_BOOKS_CSV.exists():
         return []
     with DATASET_BOOKS_CSV.open(newline="", encoding="utf-8") as file:
@@ -240,6 +288,7 @@ def dataset_books_from_csv(shelf_ids: list[str]) -> list[dict[str, Any]]:
 
 
 def hydrate_dataset_book_metadata(conn: sqlite3.Connection) -> None:
+    """Fill newly added metadata columns in databases created by older versions."""
     if not DATASET_BOOKS_CSV.exists():
         return
     missing = conn.execute("SELECT COUNT(*) FROM books WHERE publisher IS NULL OR genres IS NULL OR isbn13 IS NULL").fetchone()[0]
@@ -257,6 +306,7 @@ def hydrate_dataset_book_metadata(conn: sqlite3.Connection) -> None:
 
 
 def drop_raw_dataset_auxiliary_tables(conn: sqlite3.Connection) -> None:
+    """Remove obsolete raw-data tables now replaced by offline CSV processing."""
     conn.executescript(
         """
         DROP TABLE IF EXISTS dataset_book_shelves;
@@ -267,6 +317,7 @@ def drop_raw_dataset_auxiliary_tables(conn: sqlite3.Connection) -> None:
 
 
 def generate_shelves() -> list[tuple[str, int, int, str]]:
+    """Generate stable shelf IDs and coordinates from the physical map layout."""
     positions = []
     seen = set()
     for rows, cols in SHELF_GROUPS:
@@ -279,11 +330,13 @@ def generate_shelves() -> list[tuple[str, int, int, str]]:
 
 
 def shelf_id_for_book(index: int) -> str:
+    """Map a one-based book index cyclically onto the generated shelves."""
     shelf_count = len(generate_shelves())
     return f"S{((index - 1) % shelf_count) + 1:03d}"
 
 
 def reading_seats() -> list[tuple[int, int]]:
+    """Expand rectangular reading-area definitions into destination cells."""
     seats = []
     for rows, cols in READING_AREAS:
         for row in rows:
@@ -293,8 +346,15 @@ def reading_seats() -> list[tuple[int, int]]:
 
 
 def init_db(verbose: bool = False) -> None:
+    """Create, migrate, and populate the local catalogue database.
+
+    Startup is idempotent: existing user activity is preserved, schema migrations
+    are applied only when needed, and book rows are not duplicated.
+    """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
+        # Core application tables are deliberately small and normalized. Large
+        # recommendation interactions remain in CSV files for offline training.
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -395,6 +455,7 @@ def init_db(verbose: bool = False) -> None:
 
 
 def port_bind_error_message(port: int) -> str:
+    """Build an actionable message when the requested local port is occupied."""
     return (
         f"Port {port} is already in use on 127.0.0.1:{port}.\n"
         f"Close the program using that port, or start this app with another port, for example: PORT={port + 1} ./start_server.command"
@@ -402,12 +463,14 @@ def port_bind_error_message(port: int) -> str:
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    """Convert a SQLite row or existing dictionary into a plain dictionary."""
     if isinstance(row, dict):
         return dict(row)
     return {key: row[key] for key in row.keys()}
 
 
 def mark_favorites(conn: sqlite3.Connection, rows: list[sqlite3.Row], user_id: int | None) -> list[dict[str, Any]]:
+    """Add an ``is_favorite`` flag to book rows for the current user."""
     items = [row_to_dict(row) for row in rows]
     if not user_id or not items:
         for item in items:
@@ -429,6 +492,7 @@ def mark_favorites(conn: sqlite3.Connection, rows: list[sqlite3.Row], user_id: i
 
 
 def get_user(handler: BaseHTTPRequestHandler) -> int | None:
+    """Extract and validate the current user from an Authorization header."""
     auth = handler.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         return parse_auth_token(auth.removeprefix("Bearer ").strip())
@@ -436,6 +500,7 @@ def get_user(handler: BaseHTTPRequestHandler) -> int | None:
 
 
 def build_grid() -> list[list[int]]:
+    """Build the weighted 30x30 map used by every route-search algorithm."""
     cells = [[CELL_EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
     for row in CROWDED_ROWS:
         for col in CROWDED_COLS:
@@ -449,6 +514,7 @@ def build_grid() -> list[list[int]]:
 
 
 def grid() -> list[list[int]]:
+    """Return the cached deterministic library grid."""
     global GRID_CACHE
     if GRID_CACHE is None:
         GRID_CACHE = build_grid()
@@ -456,11 +522,13 @@ def grid() -> list[list[int]]:
 
 
 def is_reading_cell(point: tuple[int, int]) -> bool:
+    """Return whether a coordinate is one of the selectable reading seats."""
     row, col = point
     return 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and grid()[row][col] == CELL_READING
 
 
 def is_walkable(point: tuple[int, int], target: tuple[int, int] | None = None) -> bool:
+    """Return whether search may enter a cell for the current destination."""
     row, col = point
     if not (0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE):
         return False
@@ -473,15 +541,18 @@ def is_walkable(point: tuple[int, int], target: tuple[int, int] | None = None) -
 
 
 def movement_cost(point: tuple[int, int]) -> int:
+    """Return weighted movement cost; crowded cells cost twice normal aisles."""
     row, col = point
     return 2 if grid()[row][col] == CELL_CROWDED else 1
 
 
 def path_cost(path: list[list[int]]) -> int:
+    """Calculate weighted movement cost for a complete coordinate path."""
     return sum(movement_cost((row, col)) for row, col in (tuple(p) for p in path[1:]))
 
 
 def neighbors(point: tuple[int, int], target: tuple[int, int] | None = None) -> list[tuple[int, int]]:
+    """Return valid four-direction neighbors for graph search."""
     cells = grid()
     result = []
     row, col = point
@@ -493,6 +564,7 @@ def neighbors(point: tuple[int, int], target: tuple[int, int] | None = None) -> 
 
 
 def reconstruct(came_from: dict[tuple[int, int], tuple[int, int] | None], end: tuple[int, int]) -> list[list[int]]:
+    """Reconstruct a start-to-end path from predecessor links."""
     path = []
     current: tuple[int, int] | None = end
     while current is not None:
@@ -502,6 +574,7 @@ def reconstruct(came_from: dict[tuple[int, int], tuple[int, int] | None], end: t
 
 
 def normalize_path_algorithm(algorithm: str) -> str:
+    """Resolve user-facing aliases to canonical path algorithm identifiers."""
     value = (algorithm or "astar_manhattan").lower()
     aliases = {
         "astar": "astar_manhattan",
@@ -514,6 +587,7 @@ def normalize_path_algorithm(algorithm: str) -> str:
 
 
 def heuristic(point: tuple[int, int], target: tuple[int, int], algorithm: str) -> float:
+    """Calculate the selected admissible A* heuristic for the grid."""
     dr = abs(point[0] - target[0])
     dc = abs(point[1] - target[1])
     if algorithm == "astar_euclidean":
@@ -522,10 +596,12 @@ def heuristic(point: tuple[int, int], target: tuple[int, int], algorithm: str) -
 
 
 def manhattan_distance(left: tuple[int, int], right: tuple[int, int]) -> int:
+    """Return four-direction grid distance between two coordinates."""
     return abs(left[0] - right[0]) + abs(left[1] - right[1])
 
 
 def walkable_domain(target: tuple[int, int]) -> set[tuple[int, int]]:
+    """Build the original search domain before optional constraint pruning."""
     return {
         (row, col)
         for row in range(GRID_SIZE)
@@ -535,6 +611,7 @@ def walkable_domain(target: tuple[int, int]) -> set[tuple[int, int]]:
 
 
 def domain_neighbors(point: tuple[int, int], allowed: set[tuple[int, int]], target: tuple[int, int]) -> list[tuple[int, int]]:
+    """Return valid neighbors that also remain inside a constrained domain."""
     return [nxt for nxt in neighbors(point, target) if nxt in allowed]
 
 
@@ -543,6 +620,7 @@ def prune_dead_end_cells(
     endpoints: set[tuple[int, int]],
     target: tuple[int, int],
 ) -> set[tuple[int, int]]:
+    """Repeatedly remove non-endpoint dead ends from a constrained domain."""
     pruned = set(allowed)
     changed = True
     while changed:
@@ -559,6 +637,12 @@ def prune_dead_end_cells(
 
 
 def csp_path_domain(start: tuple[int, int], target: tuple[int, int]) -> dict[str, Any]:
+    """Create a CSP-inspired candidate-cell domain for one path segment.
+
+    Cells that cannot plausibly belong to a reasonably short route are removed,
+    followed by dead-end pruning. Search falls back to the full domain if these
+    constraints accidentally remove the only viable route.
+    """
     started = time.perf_counter()
     original = walkable_domain(target)
     direct_distance = manhattan_distance(start, target)
@@ -583,6 +667,7 @@ def csp_path_domain(start: tuple[int, int], target: tuple[int, int]) -> dict[str
 
 
 def empty_constraint_stats() -> dict[str, Any]:
+    """Return a zeroed accumulator for CSP-inspired pruning metrics."""
     return {
         "originalCells": 0,
         "allowedCells": 0,
@@ -593,6 +678,7 @@ def empty_constraint_stats() -> dict[str, Any]:
 
 
 def merge_constraint_stats(total: dict[str, Any], result: dict[str, Any]) -> None:
+    """Accumulate constraint metrics from one searched route segment."""
     stats = result.get("constraintStats")
     if not stats:
         return
@@ -604,6 +690,7 @@ def merge_constraint_stats(total: dict[str, Any], result: dict[str, Any]) -> Non
 
 
 def path_runtime_ms(total_runtime_ms: float, csp_runtime_ms: float = 0.0) -> float:
+    """Separate graph-search runtime from optional constraint preprocessing."""
     return round(max(0.0, float(total_runtime_ms or 0.0) - float(csp_runtime_ms or 0.0)), 3)
 
 
@@ -613,6 +700,7 @@ def run_path_search(
     algorithm: str,
     allowed: set[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
+    """Run BFS, UCS, or A* over an optional constrained set of cells."""
     expanded = 0
     if not is_walkable(start, target) or not is_walkable(target, target):
         return {"path": [], "distance": None, "expanded": expanded}
@@ -663,6 +751,7 @@ def search_path(
     algorithm: str,
     constraints_enabled: bool = False,
 ) -> dict[str, Any]:
+    """Search one route segment and attach runtime and constraint metrics."""
     started = time.perf_counter()
     algorithm = normalize_path_algorithm(algorithm)
     if not constraints_enabled:
@@ -686,10 +775,12 @@ def search_path(
 
 
 def elapsed(started: float) -> float:
+    """Return elapsed wall-clock milliseconds rounded for API display."""
     return round((time.perf_counter() - started) * 1000, 3)
 
 
 def pickup_point(shelf: sqlite3.Row) -> tuple[int, int]:
+    """Choose the first walkable aisle cell adjacent to a shelf."""
     row, col = shelf["row"], shelf["col"]
     candidates = [(row, col - 1), (row, col + 1), (row - 1, col), (row + 1, col)]
     for r, c in candidates:
@@ -699,6 +790,7 @@ def pickup_point(shelf: sqlite3.Row) -> tuple[int, int]:
 
 
 def pickup_side(shelf_row: int, shelf_col: int, pickup: tuple[int, int]) -> str:
+    """Describe the aisle side from which a selected shelf is reached."""
     row, col = pickup
     if row == shelf_row and col == shelf_col - 1:
         return "left aisle"
@@ -712,6 +804,7 @@ def pickup_side(shelf_row: int, shelf_col: int, pickup: tuple[int, int]) -> str:
 
 
 def movement_instructions(path: list[list[int]]) -> list[str]:
+    """Compress raw path coordinates into human-readable movement instructions."""
     if len(path) < 2:
         return []
 
@@ -742,6 +835,7 @@ def movement_instructions(path: list[list[int]]) -> list[str]:
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) -> None:
+    """Serialize a payload and write a complete JSON HTTP response."""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
@@ -751,6 +845,7 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) ->
 
 
 def parse_end_point(value: Any) -> tuple[int, int]:
+    """Validate a requested destination and fall back to the default seat."""
     if isinstance(value, list) and len(value) == 2:
         point = (int(value[0]), int(value[1]))
         if is_reading_cell(point):
@@ -759,16 +854,19 @@ def parse_end_point(value: Any) -> tuple[int, int]:
 
 
 def normalize_algorithm(value: Any) -> str:
+    """Accept only supported path-search algorithm identifiers."""
     algorithm = normalize_path_algorithm(str(value or "astar_manhattan"))
     return algorithm if algorithm in {"astar_manhattan", "astar_euclidean", "bfs", "ucs"} else "astar_manhattan"
 
 
 def normalize_method(value: Any) -> str:
+    """Accept only supported multi-target visit-order methods."""
     method = normalize_order_method(str(value or "greedy"))
     return method if method in {"greedy", "greedy_2opt"} else "greedy"
 
 
 def normalize_bool(value: Any) -> bool:
+    """Normalize JSON or text checkbox values into a boolean."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -777,10 +875,12 @@ def normalize_bool(value: Any) -> bool:
 
 
 def split_terms(value: str | None) -> list[str]:
+    """Split semicolon-delimited dataset fields into clean terms."""
     return [term.strip() for term in (value or "").split(";") if term.strip()]
 
 
 def split_shelf_terms(value: str | None) -> list[tuple[str, int]]:
+    """Parse ``shelf-name:count`` values from Goodreads shelf metadata."""
     terms = []
     for item in split_terms(value):
         name, _, count = item.partition(":")
@@ -789,11 +889,13 @@ def split_shelf_terms(value: str | None) -> list[tuple[str, int]]:
 
 
 def search_facets(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Return common genres and publishers for frontend search filters."""
     genre_counts: Counter[str] = Counter()
     for row in conn.execute("SELECT genres FROM books").fetchall():
         genre_counts.update(split_terms(row["genres"]))
 
     def grouped_values(column: str, limit: int = 80) -> list[str]:
+        """Return frequent non-empty scalar values for one safe internal column."""
         rows = conn.execute(
             f"""
             SELECT {column} value, COUNT(*) count
@@ -814,22 +916,28 @@ def search_facets(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
 
 def query_float(query: dict[str, list[str]], key: str) -> float | None:
+    """Read an optional floating-point value from parsed query parameters."""
     values = query.get(key, [""])
     text = values[0].strip() if values else ""
     return float_or_none(text)
 
 
 def query_int(query: dict[str, list[str]], key: str) -> int | None:
+    """Read an optional integer value from parsed query parameters."""
     values = query.get(key, [""])
     text = values[0].strip() if values else ""
     return int_or_none(text)
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Serve static frontend assets and dispatch the application's JSON API."""
+
     def log_message(self, fmt: str, *args: Any) -> None:
+        """Write concise request logs to the terminal used for the demo."""
         print("%s - %s" % (self.address_string(), fmt % args))
 
     def do_GET(self) -> None:
+        """Dispatch API GET requests or serve frontend assets."""
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -839,24 +947,28 @@ class Handler(BaseHTTPRequestHandler):
         return self.serve_static(path)
 
     def do_POST(self) -> None:
+        """Dispatch JSON POST requests to application command handlers."""
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/api/"):
             return self.handle_post(parsed.path, self.body())
         json_response(self, 404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
+        """Dispatch authenticated deletion requests."""
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path.startswith("/api/"):
             return self.handle_delete(parsed.path)
         json_response(self, 404, {"error": "Not found"})
 
     def body(self) -> dict[str, Any]:
+        """Decode the current JSON request body, treating an empty body safely."""
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def serve_static(self, path: str) -> None:
+        """Serve a frontend asset while preventing directory traversal."""
         if path == "/":
             path = "/index.html"
         target = (FRONTEND_DIR / path.lstrip("/")).resolve()
@@ -877,6 +989,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_get(self, path: str, query: dict[str, list[str]]) -> None:
+        """Handle read-only catalogue, profile, recommendation, and map APIs."""
         user_id = get_user(self)
         with connect() as conn:
             if path == "/api/auth/me":
@@ -891,6 +1004,8 @@ class Handler(BaseHTTPRequestHandler):
                 if user_id and keyword and should_record:
                     conn.execute("INSERT INTO search_history(user_id,keyword,created_at) VALUES(?,?,?)", (user_id, keyword, now()))
                 like = f"%{keyword}%"
+                # Search builds parameterized clauses for every optional filter.
+                # User values never become part of the SQL string itself.
                 clauses = [
                     """
                     (
@@ -956,6 +1071,9 @@ class Handler(BaseHTTPRequestHandler):
                     clauses.append("b.ratings_count >= ?")
                     params.append(min_ratings_count)
 
+                # A transparent weighted match score makes title and ISBN matches
+                # rank above broad description matches without requiring a search
+                # engine dependency for this coursework prototype.
                 rows = conn.execute(
                     f"""
                     SELECT b.*, s.row, s.col,
@@ -1045,6 +1163,7 @@ class Handler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "Not found"})
 
     def handle_post(self, path: str, data: dict[str, Any]) -> None:
+        """Handle commands that create accounts, favorites, or route plans."""
         user_id = get_user(self)
         with connect() as conn:
             if path == "/api/auth/register":
@@ -1114,6 +1233,7 @@ class Handler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "Not found"})
 
     def handle_delete(self, path: str) -> None:
+        """Handle removal commands that require an authenticated user."""
         user_id = get_user(self)
         if not user_id:
             return json_response(self, 401, {"error": "Unauthorized"})
@@ -1126,6 +1246,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def favorite_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
+    """Return a user's favorite books with shelf coordinates."""
     return conn.execute(
         """
         SELECT b.*, s.row, s.col, f.created_at favorite_at
@@ -1140,6 +1261,7 @@ def favorite_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
 
 
 def book_text(row: sqlite3.Row | dict[str, Any]) -> str:
+    """Combine searchable book fields into one explanatory text document."""
     keys = (
         "title",
         "original_title",
@@ -1157,10 +1279,12 @@ def book_text(row: sqlite3.Row | dict[str, Any]) -> str:
 
 
 def value_from_row(row: sqlite3.Row | dict[str, Any], key: str) -> Any:
+    """Read a value consistently from either SQLite rows or dictionaries."""
     return row.get(key, "") if isinstance(row, dict) else row[key] if key in row.keys() else ""
 
 
 def profile_book_text(row: sqlite3.Row | dict[str, Any]) -> str:
+    """Build profile text while excluding numeric shelf popularity counts."""
     keys = ("title", "original_title", "author", "category", "genres", "publisher")
     parts = [str(value_from_row(row, key) or "") for key in keys]
     parts.extend(name for name, _ in split_shelf_terms(str(value_from_row(row, "top_shelves") or "")))
@@ -1168,6 +1292,7 @@ def profile_book_text(row: sqlite3.Row | dict[str, Any]) -> str:
 
 
 def tokenize(text: str) -> list[str]:
+    """Tokenize English words, numbers, and Chinese phrases for explanations."""
     # English words/numbers and Chinese phrases are both useful in this dataset.
     return [
         token.lower()
@@ -1177,12 +1302,18 @@ def tokenize(text: str) -> list[str]:
 
 
 def is_profile_keyword(term: str) -> bool:
+    """Reject numeric-only and low-information terms from profile summaries."""
     if not term or term.isdigit():
         return False
     return any(char.isalpha() or "\u4e00" <= char <= "\u9fff" for char in term)
 
 
 def tfidf_vectors(rows: list[sqlite3.Row]) -> tuple[list[dict[str, float]], dict[str, float]]:
+    """Build lightweight TF-IDF vectors without requiring ML dependencies.
+
+    These vectors support profile keyword explanations in the API. The separately
+    trained scikit-learn model remains responsible for full recommendation ranking.
+    """
     documents = [tokenize(book_text(row)) for row in rows]
     document_frequency: Counter[str] = Counter()
     for tokens in documents:
@@ -1207,6 +1338,7 @@ def tfidf_vectors(rows: list[sqlite3.Row]) -> tuple[list[dict[str, float]], dict
 
 
 def normalize_vector(vector: dict[str, float]) -> None:
+    """Normalize a sparse dictionary vector to unit length in place."""
     norm = math.sqrt(sum(value * value for value in vector.values()))
     if norm == 0:
         return
@@ -1215,6 +1347,7 @@ def normalize_vector(vector: dict[str, float]) -> None:
 
 
 def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
+    """Calculate cosine similarity for two already-normalized sparse vectors."""
     if len(left) > len(right):
         left, right = right, left
     return sum(value * right.get(token, 0.0) for token, value in left.items())
@@ -1225,6 +1358,7 @@ def user_interest_vector(
     favorites: list[sqlite3.Row],
     idf: dict[str, float],
 ) -> dict[str, float]:
+    """Combine favorite-book and recent-search vectors into a user profile."""
     weighted_terms: Counter[str] = Counter()
     for row in history:
         weighted_terms.update({token: 3 for token in tokenize(row["keyword"])})
@@ -1240,6 +1374,7 @@ def user_interest_vector(
 
 
 def preferred_genres(favorites: list[sqlite3.Row], history: list[sqlite3.Row], limit: int = 6) -> list[dict[str, Any]]:
+    """Summarize the strongest genre signals visible in a user's activity."""
     counts: Counter[str] = Counter()
     for row in favorites:
         for genre in split_terms(row["genres"] if "genres" in row.keys() else row["category"]):
@@ -1254,6 +1389,7 @@ def preferred_genres(favorites: list[sqlite3.Row], history: list[sqlite3.Row], l
 
 
 def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | None, limit: int = 8) -> list[dict[str, Any]]:
+    """Extract readable keywords that explain a recommendation profile."""
     if not user_id:
         return []
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall()
@@ -1273,6 +1409,7 @@ def recommendation_profile_keywords(conn: sqlite3.Connection, user_id: int | Non
 
 
 def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add a rounded percentage suitable for recommendation cards."""
     enriched = []
     for book in books:
         score = float(book.get("ml_score") or 0.0)
@@ -1281,6 +1418,7 @@ def enrich_recommendation_scores(books: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def load_recommender_model() -> dict[str, Any]:
+    """Load and cache the offline-trained model, returning a safe status object."""
     path = RECOMMENDER_MODEL_PATH
     if not path.exists():
         return {"available": False, "path": str(path), "reason": "model_file_missing"}
@@ -1315,10 +1453,12 @@ def load_recommender_model() -> dict[str, Any]:
 
 
 def public_model_status(status: dict[str, Any]) -> dict[str, Any]:
+    """Remove the large private model object before returning status as JSON."""
     return {key: value for key, value in status.items() if key != "model"}
 
 
 def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit: int) -> dict[str, Any]:
+    """Return recommendations together with model and profile explanations."""
     history = conn.execute("SELECT keyword FROM search_history WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,)).fetchall() if user_id else []
     favs = favorite_rows(conn, user_id) if user_id else []
     profile = recommendation_profile_keywords(conn, user_id)
@@ -1334,6 +1474,7 @@ def recommendation_analysis(conn: sqlite3.Connection, user_id: int | None, limit
 
 
 def candidate_book_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return all books and coordinates eligible for recommendation ranking."""
     return [
         row_to_dict(row)
         for row in conn.execute(
@@ -1346,6 +1487,7 @@ def candidate_book_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def cached_book_vectors(conn: sqlite3.Connection) -> tuple[list[dict[str, Any]], list[dict[str, float]], dict[str, float]]:
+    """Cache explanatory book vectors until the active database changes."""
     key = str(DB_PATH)
     if BOOK_VECTOR_CACHE.get("key") != key:
         rows = candidate_book_rows(conn)
@@ -1356,6 +1498,7 @@ def cached_book_vectors(conn: sqlite3.Connection) -> tuple[list[dict[str, Any]],
 
 
 def popularity_scores(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    """Calculate a rating-and-volume popularity baseline for fallback ranking."""
     global POPULARITY_CACHE
     if POPULARITY_CACHE is not None and POPULARITY_CACHE.get("__db_key", {}).get("score") == str(DB_PATH):
         return {key: value for key, value in POPULARITY_CACHE.items() if key != "__db_key"}
@@ -1384,6 +1527,7 @@ def popularity_scores(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
 
 
 def user_recommendation_signature(conn: sqlite3.Connection, user_id: int | None, limit: int) -> tuple[Any, ...]:
+    """Build a cache key that changes when relevant user signals or model change."""
     model_mtime = RECOMMENDER_MODEL_PATH.stat().st_mtime if RECOMMENDER_MODEL_PATH.exists() else 0
     if not user_id:
         return (str(DB_PATH), "anonymous", limit, str(RECOMMENDER_MODEL_PATH), model_mtime)
@@ -1409,16 +1553,19 @@ def user_recommendation_signature(conn: sqlite3.Connection, user_id: int | None,
 
 
 def clamp_score(value: float) -> float:
+    """Keep public recommendation scores finite and within zero to one."""
     if not math.isfinite(value):
         return 0.0
     return round(max(0.0, min(1.0, value)), 4)
 
 
 def book_rows_by_book_id(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    """Index candidate rows by source book ID for model inference."""
     return {str(row["book_id"]): row for row in candidate_book_rows(conn)}
 
 
 def scored_item(row: dict[str, Any], score: float, method: str, reason: str) -> dict[str, Any]:
+    """Attach explainable recommendation metadata to one book."""
     item = row_to_dict(row)
     item["recommendation_method"] = method
     item["reason"] = reason
@@ -1433,6 +1580,7 @@ def svd_recommendations(
     favorites: list[sqlite3.Row],
     limit: int,
 ) -> list[dict[str, Any]]:
+    """Rank books against the average SVD embedding of a user's favorites."""
     try:
         import numpy as np
     except Exception:
@@ -1476,6 +1624,7 @@ def content_cold_start_recommendations(
     favorites: list[sqlite3.Row],
     limit: int,
 ) -> list[dict[str, Any]]:
+    """Use recent search text to recommend books before favorites are available."""
     query = " ".join(row["keyword"] for row in history if row["keyword"]).strip()
     if not query:
         return []
@@ -1504,6 +1653,7 @@ def content_cold_start_recommendations(
 
 
 def popularity_fallback_recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int, reason: str) -> list[dict[str, Any]]:
+    """Return reliable baseline recommendations when personalization is unavailable."""
     rows = conn.execute(
         """
         SELECT b.*, s.row, s.col
@@ -1525,6 +1675,12 @@ def popularity_fallback_recommendations(conn: sqlite3.Connection, user_id: int |
 
 
 def recommendations(conn: sqlite3.Connection, user_id: int | None, limit: int) -> list[dict[str, Any]]:
+    """Select the strongest available recommendation strategy for a user.
+
+    Strategy order is SVD collaborative filtering, TF-IDF content cold start, and
+    finally popularity fallback. This keeps the user-facing feature available even
+    when an optional trained model or sufficient user behavior is missing.
+    """
     cache_key = user_recommendation_signature(conn, user_id, limit)
     if cache_key in RECOMMENDATION_CACHE:
         return [dict(item) for item in RECOMMENDATION_CACHE[cache_key]]
@@ -1560,6 +1716,7 @@ def plan_pickup(
     end: tuple[int, int] = DEFAULT_SEAT,
     constraints_enabled: bool = False,
 ) -> dict[str, Any]:
+    """Plan a greedy multi-book route by searching each next candidate on demand."""
     algorithm = normalize_path_algorithm(algorithm)
     rows = conn.execute(
         f"""
@@ -1667,6 +1824,7 @@ def plan_pickup(
 
 
 def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[str, Any]]:
+    """Resolve selected books into shelf-adjacent pickup targets."""
     rows = conn.execute(
         f"""
         SELECT b.id, b.book_id, b.title, b.shelf_id, s.row, s.col
@@ -1679,6 +1837,7 @@ def pickup_targets(conn: sqlite3.Connection, book_ids: list[int]) -> list[dict[s
 
 
 def normalize_order_method(method: str) -> str:
+    """Resolve visit-order aliases to canonical planner identifiers."""
     value = (method or "greedy").lower()
     aliases = {
         "two_opt": "greedy_2opt",
@@ -1696,6 +1855,7 @@ def solve_pickup(
     end: tuple[int, int] = DEFAULT_SEAT,
     constraints_enabled: bool = False,
 ) -> dict[str, Any]:
+    """Coordinate path search and visit-order planning for a pickup request."""
     algorithm = normalize_path_algorithm(algorithm)
     method = normalize_order_method(method)
     if method not in {"greedy", "greedy_2opt"}:
@@ -1751,6 +1911,7 @@ def solve_pickup(
 
 
 def compute_keypoints(targets: list[dict[str, Any]], end: tuple[int, int] = DEFAULT_SEAT) -> list[tuple[int, int]]:
+    """Return entrance, pickup points, and final seat in planner-index order."""
     return [ENTRANCE, *[tuple(t["pickup"]) for t in targets], end]
 
 
@@ -1759,6 +1920,7 @@ def precompute_paths(
     algorithm: str,
     constraints_enabled: bool = False,
 ) -> tuple[dict[tuple[int, int], dict[str, Any]], int, float, dict[str, Any]]:
+    """Search every directed keypoint pair once for inexpensive order comparison."""
     results: dict[tuple[int, int], dict[str, Any]] = {}
     total_expanded = 0
     total_runtime = 0.0
@@ -1780,6 +1942,7 @@ def best_segment(
     src_idx: int,
     dst_idx: int,
 ) -> dict[str, Any]:
+    """Read one precomputed segment or return a safe unreachable placeholder."""
     return pair_results.get((src_idx, dst_idx), {"path": [], "distance": None, "expanded": 0, "runtimeMs": 0.0})
 
 
@@ -1788,6 +1951,7 @@ def route_order_cost(
     order: list[int],
     target_count: int,
 ) -> int | None:
+    """Calculate complete entrance-to-seat cost for one candidate pickup order."""
     current_idx = 0
     total = 0
     for target_idx in order:
@@ -1806,6 +1970,7 @@ def greedy_pickup_order(
     pair_results: dict[tuple[int, int], dict[str, Any]],
     target_count: int,
 ) -> tuple[list[int], int]:
+    """Choose each next pickup using nearest-neighbor route cost."""
     current_idx = 0
     remaining = set(range(1, target_count + 1))
     order: list[int] = []
@@ -1830,6 +1995,7 @@ def greedy_two_opt_pickup_order(
     pair_results: dict[tuple[int, int], dict[str, Any]],
     target_count: int,
 ) -> tuple[list[int], int]:
+    """Improve a greedy order by repeatedly accepting beneficial 2-opt reversals."""
     # Start with greedy nearest-neighbor order, then use 2-opt reversals to reduce route cost.
     order, solver_expanded = greedy_pickup_order(pair_results, target_count)
     if len(order) < 3:
@@ -1867,6 +2033,7 @@ def plan_pickup_with_order(
     pair_results: dict[tuple[int, int], dict[str, Any]],
     end: tuple[int, int] = DEFAULT_SEAT,
 ) -> dict[str, Any]:
+    """Assemble precomputed path segments into one ordered user-facing route."""
     current_idx = 0
     full_path: list[list[int]] = [[ENTRANCE[0], ENTRANCE[1]]]
     visit_order: list[dict[str, Any]] = []
@@ -1945,6 +2112,7 @@ def plan_pickup_with_order(
 
 
 def main() -> None:
+    """Initialize data and run the threaded local HTTP server."""
     print("Checking and preparing the local database...")
     init_db(verbose=True)
     print("Database is ready.")

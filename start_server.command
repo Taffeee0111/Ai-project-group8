@@ -1,6 +1,8 @@
 #!/bin/bash
+# Starts the application with the environment created by setup.command.
 set -e
 
+# Resolve paths from the project directory when launched from Finder or Terminal.
 cd "$(dirname "$0")"
 
 echo "Starting Library Borrowing System..."

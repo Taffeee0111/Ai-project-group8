@@ -4,6 +4,14 @@ This project is a prototype library borrowing website for `DI22001 - Algorithms 
 
 The current implementation is a Python standard-library backend, SQLite, and a static frontend. It does not use FastAPI, React, Vue, or a frontend build pipeline. The recommendation system uses an optional offline-trained classical machine learning model; when the model is missing, the site still works and falls back to popular highly rated books.
 
+## Team Members
+
+- Ruizhe Yang (2666039)
+- Kefu Deng (2665826)
+- Jingsong She (2666028)
+- Kuoyu Li (2666019)
+- Sihao Xiong (2666056)
+
 ## Features
 
 - Register and sign in.
@@ -22,14 +30,39 @@ The current implementation is a Python standard-library backend, SQLite, and a s
 
 ## Data
 
-The repository includes the raw dataset CSV files, but not the generated local SQLite database:
+The repository includes the processed dataset CSV files, but not the generated local SQLite database:
 
 ```text
 backend/data/dataset/books_10k.csv
 backend/data/dataset/interactions_10k.csv
-backend/data/dataset/book_shelves_10k.csv
-backend/data/dataset/book_id_map_10k.csv
 ```
+
+### Dataset provenance and permitted use
+
+The submitted CSV files are processed academic-use subsets derived from two related Goodreads data sources:
+
+- **Book selection:** the 10,000 popular-book selection follows Zygmunt Zajac's
+  [Goodbooks-10k](https://github.com/zygmuntz/goodbooks-10k) dataset. Its repository
+  is licensed under
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **Detailed metadata and interactions:** book metadata, public shelf tags, and
+  anonymized user-book interactions were derived from the
+  [UCSD Goodreads Book Graph](https://cseweb.ucsd.edu/~jmcauley/datasets/goodreads.html),
+  collected by Mengting Wan and Julian McAuley's research group. The source page
+  states that the data is for academic use only and must not be redistributed or
+  used commercially.
+
+`books_10k.csv` combines the selected book IDs with processed metadata and inferred
+genre labels. `interactions_10k.csv` is a filtered sample of the UCSD interaction
+data, capped at 500 retained interactions per selected book. User identifiers remain
+anonymized. `estimated_word_count` is a project-derived field calculated as
+`num_pages * 275`; it is not an original Goodreads field.
+
+Because the UCSD source restricts redistribution, do not publish or commercially
+redistribute the derived CSV files without confirming permission. Their inclusion in
+coursework should remain within the institution's academic submission process.
+See `backend/data/dataset/README.md` for citation-ready references and detailed
+processing notes.
 
 On first backend startup, `backend/server.py` creates:
 
@@ -146,17 +179,9 @@ username: demo
 password: demo123
 ```
 
-## Testing
-
-The tests use Python's built-in `unittest` runner, so no separate `pytest` dependency is required:
-
-```bash
-.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-```
-
 ## Submission Notes
 
-For the coursework ZIP, include the source code, Goodreads CSV data under `backend/data/dataset/`, README/docs, startup scripts, requirements, and tests. Do not include local generated files such as `.venv/`, `backend/data/library.db`, `backend/data/models/recommender.joblib`, `.DS_Store`, or compiled binaries.
+This submission contains the source code, the two Goodreads CSV files used by the application and recommender training, dataset notes, startup scripts, and Python requirements. Local generated files such as `.venv/`, `backend/data/library.db`, `backend/data/models/recommender.joblib`, `.DS_Store`, and compiled binaries are intentionally excluded.
 
 ## API Summary
 
@@ -220,17 +245,17 @@ backend/
     train_recommender.py   # Offline SVD + TF-IDF recommendation training
   server.py                # HTTP API, SQLite initialization, recommendations, map, and path algorithms
   data/
-    dataset/               # Raw Goodreads CSV files
+    dataset/
+      README.md
+      books_10k.csv        # Book metadata used at runtime and during model training
+      interactions_10k.csv # User-book interactions used during model training
+      interactions_summary.md
 
 frontend/
   static/
     index.html
     app.js
     styles.css
-
-tests/
-  test_*.py
-
 setup.command              # macOS/Linux setup
 setup.bat                  # Windows setup
 start_server.command       # macOS/Linux local server startup

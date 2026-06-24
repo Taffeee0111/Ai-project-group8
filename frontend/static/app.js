@@ -1,3 +1,14 @@
+/*
+ * Client-side controller for the library demonstration.
+ *
+ * The frontend is intentionally dependency-free. It manages four pages, calls the
+ * JSON API, renders book and route data, animates pickup paths, and compares search
+ * algorithms. Server responses remain the source of truth for catalogue and route
+ * calculations; this file focuses on interaction and visualization.
+ */
+
+// Shared application state keeps navigation and asynchronous rendering consistent.
+// Request IDs are used to ignore stale responses when users change options quickly.
 const state = {
   token: localStorage.getItem("token") || "",
   user: null,
@@ -48,6 +59,10 @@ const titles = {
   profile: ["Profile", ""],
 };
 
+// ---------------------------------------------------------------------------
+// API, navigation, and reusable book presentation
+// ---------------------------------------------------------------------------
+
 function qs(selector) {
   return document.querySelector(selector);
 }
@@ -57,6 +72,8 @@ function authHeaders() {
 }
 
 async function api(path, options = {}) {
+  // AbortController prevents a slow request from leaving the interface waiting
+  // indefinitely. Authentication and JSON headers are applied in one place.
   const { timeoutMs, ...requestOptions } = options;
   let timeoutId = null;
   let signal = requestOptions.signal;
@@ -92,6 +109,8 @@ async function api(path, options = {}) {
 }
 
 function setPage(page) {
+  // Pause route playback before leaving the workbench so hidden animation frames
+  // do not continue consuming resources or mutate visible state unexpectedly.
   if (page !== "pickup") pauseRouteAnimation();
   state.page = page;
   document.querySelectorAll(".page").forEach((el) => el.classList.remove("active"));
@@ -109,6 +128,8 @@ function setPage(page) {
 }
 
 function bookCard(book, options = {}) {
+  // One card renderer is reused by search, favorites, recommendations, and pickup
+  // selection. Options enable only the controls appropriate to each context.
   const keyword = options.highlight || "";
   const useDatasetSummary = Boolean(options.datasetMeta);
   const useDetails = Boolean(options.collapsibleDetails);
@@ -220,6 +241,7 @@ function formatNumber(value) {
 }
 
 function escapeHtml(value) {
+  // All dataset and user-provided text is escaped before insertion into templates.
   return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -232,6 +254,7 @@ function escapeRegExp(value) {
 }
 
 function highlightText(value, keyword) {
+  // Highlight only after escaping so matched dataset text cannot inject markup.
   const text = escapeHtml(value);
   const term = String(keyword || "").trim();
   if (!term) return text;
@@ -251,6 +274,10 @@ function descriptionSnippet(description, keyword) {
   const suffix = end < raw.length ? "..." : "";
   return `${prefix}${highlightText(raw.slice(start, end), term)}${suffix}`;
 }
+
+// ---------------------------------------------------------------------------
+// Catalogue search, recommendation loading, and favorites
+// ---------------------------------------------------------------------------
 
 async function loadStats() {
   const stats = await api("/api/stats");
@@ -292,6 +319,8 @@ async function loadMe() {
 }
 
 async function searchBooks(options = {}) {
+  // Passive refreshes do not record duplicate search history; deliberate searches
+  // use the API's default recording behavior.
   const record = options.record !== false;
   const keyword = qs("#searchInput").value.trim();
   state.searchKeyword = keyword;
@@ -354,6 +383,7 @@ function resetSearchFilters() {
 }
 
 function scheduleRecommendationRefresh(delay = 160) {
+  // Debouncing combines rapid favorite changes into one recommendation refresh.
   window.clearTimeout(state.recommendationTimer);
   state.recommendationTimer = window.setTimeout(() => {
     state.recommendationTimer = null;
@@ -424,6 +454,8 @@ function setFavoriteButtonsState(bookId, isFavorite, disabled = false) {
 }
 
 async function toggleFavorite(bookId, isFavorite) {
+  // Optimistic button updates make the action feel immediate. On failure, every
+  // matching button is restored to the server-confirmed previous state.
   if (!state.token) {
     setPage("login");
     return;
@@ -478,6 +510,10 @@ async function loadPickup() {
   renderCspMetrics();
   renderMap();
 }
+
+// ---------------------------------------------------------------------------
+// Pickup workbench state, selected books, and picker modal
+// ---------------------------------------------------------------------------
 
 function renderSelectedSeat() {
   const box = qs("#selectedSeatInfo");
@@ -579,6 +615,8 @@ function setWorkbenchView(view) {
 }
 
 function scheduleAutoPlan() {
+  // Route settings may change several times in quick succession; schedule only
+  // one recalculation once the control changes settle.
   if (!state.autoPlanEnabled) return;
   window.clearTimeout(state.autoPlanTimer);
   state.autoPlanTimer = window.setTimeout(() => {
@@ -692,6 +730,7 @@ function clearPickupSelection() {
 }
 
 function openPicker(mode, items = []) {
+  // Picker selections are staged separately and committed only on confirmation.
   state.pickerMode = mode;
   state.pickerItems = items;
   state.pickerTempSelected = selectedPickupIds();
@@ -793,6 +832,10 @@ function confirmPickerSelection() {
   markRouteSettingsChanged();
 }
 
+// ---------------------------------------------------------------------------
+// Route geometry and map rendering
+// ---------------------------------------------------------------------------
+
 function getVisibleRoutePath() {
   return state.activeSegment == null
     ? state.path
@@ -878,6 +921,8 @@ function routeAxisOffset(previous, current, axis) {
 }
 
 function routeRuns(path) {
+  // Split a path into straight runs so overlapping routes can be offset without
+  // breaking corners or drawing every individual grid edge as a separate element.
   if (path.length < 2) return [];
   const runs = [];
   let start = 0;
@@ -904,6 +949,7 @@ function canonicalEdgeKey(a, b) {
 }
 
 function sharedRouteEdgeUsage() {
+  // Count canonical undirected edges to find segments shared by multiple routes.
   const usage = new Map();
   state.segments.forEach((segment, segmentIndex) => {
     (segment.path || []).slice(1).forEach((point, index) => {
@@ -1008,6 +1054,7 @@ function renderRouteOverlays() {
 }
 
 function renderMapInto(grid) {
+  // The same renderer targets the workbench map and the enlarged modal map.
   if (!grid || !state.map) return;
   const selectedSeatKey = state.selectedSeat ? `${state.selectedSeat[0]},${state.selectedSeat[1]}` : "";
   const targetByCell = new Map();
@@ -1045,6 +1092,8 @@ function renderMapInto(grid) {
 }
 
 function renderRouteLines(grid) {
+  // SVG overlays preserve sharp route lines while the underlying map remains an
+  // accessible grid of clickable HTML cells.
   if (!state.segments.length) return;
   const rect = grid.getBoundingClientRect();
   const svg = document.createElementNS(SVG_NS, "svg");
@@ -1137,6 +1186,10 @@ function closeMapModal() {
   qs("#mapModal").hidden = true;
 }
 
+// ---------------------------------------------------------------------------
+// Route playback and step navigation
+// ---------------------------------------------------------------------------
+
 function updateRouteProgress() {
   const path = getVisibleRoutePath();
   const playButton = qs("#playRouteButton");
@@ -1172,6 +1225,8 @@ function resetRouteAnimation() {
 }
 
 function advanceRouteAnimation(timestamp) {
+  // requestAnimationFrame supplies elapsed time; progress is represented in path
+  // steps so playback speed remains predictable across different route shapes.
   const path = getVisibleRoutePath();
   if (!path.length) {
     resetRouteAnimation();
@@ -1283,6 +1338,8 @@ function moveRouteSegment(delta) {
 }
 
 async function planPath(options = {}) {
+  // Each planning request receives an ID. A late response is discarded if the
+  // user has already changed books, algorithms, constraints, or destination.
   window.clearTimeout(state.autoPlanTimer);
   state.autoPlanTimer = null;
   const ids = state.pickupSelection.map((book) => Number(book.id));
@@ -1412,7 +1469,13 @@ function compareTaskPayload() {
   return { ids, end: state.selectedSeat, constraintsEnabled: constraintsEnabled() };
 }
 
+// ---------------------------------------------------------------------------
+// Algorithm comparison, profile, and authentication
+// ---------------------------------------------------------------------------
+
 async function openAlgorithmCompare(type) {
+  // Comparisons reuse the exact same selected books and destination, ensuring the
+  // displayed metric differences come from algorithms rather than task changes.
   const task = compareTaskPayload();
   if (!task) return;
 
@@ -1646,7 +1709,13 @@ async function submitAuth() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Event wiring and application startup
+// ---------------------------------------------------------------------------
+
 function bindEvents() {
+  // Event delegation handles repeated book-card controls without attaching a
+  // separate listener every time search or recommendation content is rerendered.
   document.querySelectorAll(".nav-button").forEach((button) => {
     button.addEventListener("click", () => setPage(button.dataset.page));
   });
@@ -1819,6 +1888,7 @@ function switchAuth(register) {
 }
 
 async function boot() {
+  // Bind controls first, then load independent initial datasets in parallel.
   bindEvents();
   await loadStats();
   await loadMe();
